@@ -2,10 +2,7 @@
 import fingerprintHex from 'bundle-text:../cert/localhost.hex';
 
 // Convert the hex to binary.
-let fingerprint = [];
-for (let c = 0; c < fingerprintHex.length - 1; c += 2) {
-    fingerprint.push(parseInt(fingerprintHex.substring(c, c + 2), 16));
-}
+const fingerprint = Uint8Arra.fromHex(fingerprint);
 
 const params = new URLSearchParams(window.location.search)
 
@@ -24,7 +21,7 @@ async function run() {
     const transport = new WebTransport(url, {
         serverCertificateHashes: [{
             "algorithm": "sha-256",
-            "value": new Uint8Array(fingerprint),
+            "value": fingerprint
         }],
     });
     await transport.ready;
