@@ -75,7 +75,15 @@ impl RecvStream {
         }
     }
 
-    // We purposely don't expose the stream ID or 0RTT because it's not valid with WebTransport
+    /// Get the QUIC stream ID of this stream.
+    ///
+    /// This is NOT a per-session stream ID and should not be used for enforcing any
+    /// per-session stream limit.
+    pub fn quic_id(&self) -> quinn::StreamId {
+        self.inner.id()
+    }
+
+    // We purposely don't expose the 0RTT because it's not valid with WebTransport
 }
 
 impl tokio::io::AsyncRead for RecvStream {

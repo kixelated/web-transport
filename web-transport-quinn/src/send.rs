@@ -82,6 +82,14 @@ impl SendStream {
     pub fn priority(&self) -> Result<i32, ClosedStream> {
         self.stream.priority().map_err(Into::into)
     }
+
+    /// Get the QUIC stream ID of this stream.
+    ///
+    /// This is NOT a per-session stream ID and should not be used for enforcing any
+    /// per-session stream limit.
+    pub fn quic_id(&self) -> quinn::StreamId {
+        self.stream.id()
+    }
 }
 
 impl tokio::io::AsyncWrite for SendStream {
