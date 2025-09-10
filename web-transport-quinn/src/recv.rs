@@ -75,7 +75,18 @@ impl RecvStream {
         }
     }
 
-    // We purposely don't expose the stream ID or 0RTT because it's not valid with WebTransport
+    /// Return the underlying QUIC stream ID.
+    ///
+    /// > **Warning**
+    /// >
+    /// > WebTransport sessions share the QUIC connection with HTTP/3 and potentially other sessions.
+    /// > The [quinn::StreamId::index] might not increment by 1 like expected when using [quinn].
+    /// > This is why the Javascript WebTransport API does not expose the Stream ID.
+    pub fn quic_id(&self) -> quinn::StreamId {
+        self.inner.id()
+    }
+
+    // We purposely don't expose the 0RTT because it's not valid with WebTransport
 }
 
 impl tokio::io::AsyncRead for RecvStream {

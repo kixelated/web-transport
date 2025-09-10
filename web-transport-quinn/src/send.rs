@@ -82,6 +82,17 @@ impl SendStream {
     pub fn priority(&self) -> Result<i32, ClosedStream> {
         self.stream.priority().map_err(Into::into)
     }
+
+    /// Return the underlying QUIC stream ID.
+    ///
+    /// > **Warning**
+    /// >
+    /// > WebTransport sessions share the QUIC connection with HTTP/3 and potentially other sessions.
+    /// > The [quinn::StreamId::index] might not increment by 1 like expected when using [quinn].
+    /// > This is why the Javascript WebTransport API does not expose the Stream ID.
+    pub fn quic_id(&self) -> quinn::StreamId {
+        self.stream.id()
+    }
 }
 
 impl tokio::io::AsyncWrite for SendStream {
