@@ -45,24 +45,21 @@ export default class WebTransportTauri implements WebTransport {
 			}),
 		);
 
-		this.incomingBidirectionalStreams =
-			new ReadableStream<WebTransportBidirectionalStream>({
-				pull: async (controller) => {
-					const accept = await rpc.accept({
-						session: await this.#session,
-						bidirectional: true,
-					});
+		this.incomingBidirectionalStreams = new ReadableStream<WebTransportBidirectionalStream>({
+			pull: async (controller) => {
+				const accept = await rpc.accept({
+					session: await this.#session,
+					bidirectional: true,
+				});
 
-					const readable = this.#createReadable(accept.stream);
-					const writable = this.#createWritable(accept.stream);
+				const readable = this.#createReadable(accept.stream);
+				const writable = this.#createWritable(accept.stream);
 
-					controller.enqueue({ readable, writable });
-				},
-			});
+				controller.enqueue({ readable, writable });
+			},
+		});
 
-		this.incomingUnidirectionalStreams = new ReadableStream<
-			ReadableStream<Uint8Array>
-		>({
+		this.incomingUnidirectionalStreams = new ReadableStream<ReadableStream<Uint8Array>>({
 			pull: async (controller) => {
 				const accept = await rpc.accept({
 					session: await this.#session,
@@ -128,9 +125,7 @@ export default class WebTransportTauri implements WebTransport {
 		);
 	}
 
-	async createBidirectionalStream(
-		options?: WebTransportSendStreamOptions,
-	): Promise<WebTransportBidirectionalStream> {
+	async createBidirectionalStream(options?: WebTransportSendStreamOptions): Promise<WebTransportBidirectionalStream> {
 		const response = await rpc.open({
 			session: await this.#session,
 			bidirectional: true,
@@ -143,9 +138,7 @@ export default class WebTransportTauri implements WebTransport {
 		};
 	}
 
-	async createUnidirectionalStream(
-		options?: WebTransportSendStreamOptions,
-	): Promise<WritableStream> {
+	async createUnidirectionalStream(options?: WebTransportSendStreamOptions): Promise<WritableStream> {
 		const response = await rpc.open({
 			session: await this.#session,
 			bidirectional: false,
@@ -157,9 +150,7 @@ export default class WebTransportTauri implements WebTransport {
 }
 
 // TODO Implement this
-export class WebTransportDatagramDuplexStreamTauri
-	implements WebTransportDatagramDuplexStream
-{
+export class WebTransportDatagramDuplexStreamTauri implements WebTransportDatagramDuplexStream {
 	incomingHighWaterMark: number;
 	incomingMaxAge: number | null;
 	readonly maxDatagramSize: number;

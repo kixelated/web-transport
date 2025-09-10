@@ -2,7 +2,7 @@
 // This creates a dist/ folder with the correct paths and dependencies for publishing
 // Split from release.ts to allow building packages without publishing
 
-import { copyFileSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { copyFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 console.log("✍️  Rewriting package.json...");

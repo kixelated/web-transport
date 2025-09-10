@@ -24,13 +24,13 @@
           pkgs.clippy
           pkgs.cargo-shear
           pkgs.cargo-sort
-          pkgs.cargo-upgrades
           pkgs.cargo-edit
         ];
 
         jsTools = [
           pkgs.nodejs_24
           pkgs.pnpm_10
+          pkgs.biome
         ];
 
         tools = [

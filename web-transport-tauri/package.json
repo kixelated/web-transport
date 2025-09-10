@@ -1,38 +1,38 @@
 {
-  "name": "@kixelated/web-transport-tauri",
-  "author": "Luke Curley <kixelated@gmail.com>",
-  "version": "0.1.0",
-  "description": "WebTransport polyfill using Tauri",
-  "type": "module",
-  "license": "(MIT OR Apache-2.0)",
-  "repository": "github:kixelated/web-transport",
-  "exports": {
-    ".": "./src/index.ts"
-  },
-  "types": "./src/index.ts",
-  "files": [
-    "./src"
-  ],
-  "scripts": {
-    "build": "rimraf dist && tsc && tsx ../scripts/package.ts",
-    "dev": "tsc --watch",
-    "check": "tsc --noEmit"
-  },
-  "dependencies": {
-    "@tauri-apps/api": "2.8.0",
-    "buffer": "^6.0.3"
-  },
-  "devDependencies": {
-    "typescript": "^5.9.2",
-    "rimraf": "^6.0.1",
-    "@types/node": "^24.3.0",
-    "tsx": "^4.20.5"
-  },
-  "keywords": [
-    "webtransport",
-    "tauri",
-    "polyfill",
-    "quic",
-    "streams"
-  ]
+	"name": "@kixelated/web-transport-tauri",
+	"author": "Luke Curley <kixelated@gmail.com>",
+	"version": "0.1.0",
+	"description": "WebTransport polyfill using Tauri",
+	"type": "module",
+	"license": "(MIT OR Apache-2.0)",
+	"repository": "github:kixelated/web-transport",
+	"exports": {
+		".": "./src/index.ts"
+	},
+	"types": "./src/index.ts",
+	"files": [
+		"./src"
+	],
+	"scripts": {
+		"build": "rimraf dist && tsc && tsx ../scripts/package.ts",
+		"dev": "tsc --watch",
+		"check": "tsc --noEmit"
+	},
+	"dependencies": {
+		"@tauri-apps/api": "2.8.0",
+		"buffer": "^6.0.3"
+	},
+	"devDependencies": {
+		"typescript": "^5.9.2",
+		"rimraf": "^6.0.1",
+		"@types/node": "^24.3.0",
+		"tsx": "^4.20.5"
+	},
+	"keywords": [
+		"webtransport",
+		"tauri",
+		"polyfill",
+		"quic",
+		"streams"
+	]
 }

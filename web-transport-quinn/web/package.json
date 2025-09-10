@@ -1,6 +1,6 @@
 {
-  "devDependencies": {
-    "@parcel/transformer-inline-string": "^2.10.3",
-    "parcel": "^2.10.3"
-  }
+	"devDependencies": {
+		"@parcel/transformer-inline-string": "^2.10.3",
+		"parcel": "^2.10.3"
+	}
 }

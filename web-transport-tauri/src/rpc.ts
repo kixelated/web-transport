@@ -12,9 +12,7 @@ export interface ConnectResponse {
 	session: number;
 }
 
-export async function connect(
-	payload: ConnectRequest,
-): Promise<ConnectResponse> {
+export async function connect(payload: ConnectRequest): Promise<ConnectResponse> {
 	return invoke<ConnectResponse>("plugin:web-transport|connect", {
 		payload,
 	});

@@ -19,22 +19,22 @@ export default class WebTransportWs implements WebTransport {
 	readonly closed: Promise<WebTransportCloseInfo>;
 	#closedResolve!: (info: WebTransportCloseInfo) => void;
 
-    readonly incomingBidirectionalStreams: ReadableStream<WebTransportBidirectionalStream>;
-    #incomingBidirectionalStreams!: ReadableStreamDefaultController<WebTransportBidirectionalStream>;
-    readonly incomingUnidirectionalStreams: ReadableStream<ReadableStream<Uint8Array>>;
-    #incomingUnidirectionalStreams!: ReadableStreamDefaultController<ReadableStream<Uint8Array>>;
+	readonly incomingBidirectionalStreams: ReadableStream<WebTransportBidirectionalStream>;
+	#incomingBidirectionalStreams!: ReadableStreamDefaultController<WebTransportBidirectionalStream>;
+	readonly incomingUnidirectionalStreams: ReadableStream<ReadableStream<Uint8Array>>;
+	#incomingUnidirectionalStreams!: ReadableStreamDefaultController<ReadableStream<Uint8Array>>;
 
-    // TODO: Implement datagrams
+	// TODO: Implement datagrams
 	readonly datagrams = new Datagrams();
 
 	constructor(url: string | URL, options?: WebTransportOptions) {
-        if (options?.requireUnreliable) {
-            throw new Error("not allowed to use WebSocket; requireUnreliable is true");
-        }
+		if (options?.requireUnreliable) {
+			throw new Error("not allowed to use WebSocket; requireUnreliable is true");
+		}
 
-        if (options?.serverCertificateHashes) {
-            console.warn("serverCertificateHashes is not supported; trying anyway");
-        }
+		if (options?.serverCertificateHashes) {
+			console.warn("serverCertificateHashes is not supported; trying anyway");
+		}
 
 		url = WebTransportWs.#convertToWebSocketUrl(url);
 
@@ -54,17 +54,17 @@ export default class WebTransportWs implements WebTransport {
 		this.#ws.onerror = (event) => this.#handleError(event);
 		this.#ws.onclose = (event) => this.#handleClose(event);
 
-        this.incomingBidirectionalStreams = new ReadableStream<WebTransportBidirectionalStream>({
-            start: (controller) => {
-                this.#incomingBidirectionalStreams = controller;
-            },
-        });
+		this.incomingBidirectionalStreams = new ReadableStream<WebTransportBidirectionalStream>({
+			start: (controller) => {
+				this.#incomingBidirectionalStreams = controller;
+			},
+		});
 
-        this.incomingUnidirectionalStreams = new ReadableStream<ReadableStream<Uint8Array>>({
-            start: (controller) => {
-                this.#incomingUnidirectionalStreams = controller;
-            },
-        });
+		this.incomingUnidirectionalStreams = new ReadableStream<ReadableStream<Uint8Array>>({
+			start: (controller) => {
+				this.#incomingUnidirectionalStreams = controller;
+			},
+		});
 	}
 
 	static #convertToWebSocketUrl(url: string | URL): string {
@@ -101,16 +101,14 @@ export default class WebTransportWs implements WebTransport {
 		if (this.#closed) return;
 
 		this.#closed = new Error(`WebSocket error: ${event.type}`);
-        this.#close(1006, "WebSocket error");
+		this.#close(1006, "WebSocket error");
 	}
 
 	#handleClose(event: CloseEvent) {
 		if (this.#closed) return;
 
-		this.#closed = new Error(
-			`Connection closed: ${event.code} ${event.reason}`,
-		);
-        this.#close(event.code, event.reason);
+		this.#closed = new Error(`Connection closed: ${event.code} ${event.reason}`);
+		this.#close(event.code, event.reason);
 	}
 
 	#recvFrame(frame: Frame.Any) {
@@ -121,9 +119,7 @@ export default class WebTransportWs implements WebTransport {
 		} else if (frame.type === "stop_sending") {
 			this.#handleStopSending(frame);
 		} else if (frame.type === "connection_close") {
-			this.#closeReason = new Error(
-				`Connection closed: ${frame.code.value}: ${frame.reason}`,
-			);
+			this.#closeReason = new Error(`Connection closed: ${frame.code.value}: ${frame.reason}`);
 			this.#ws.close();
 		} else {
 			const exhaustive: never = frame;
@@ -142,15 +138,15 @@ export default class WebTransportWs implements WebTransport {
 		if (!stream) {
 			// We created the stream, we can skip it.
 			if (frame.id.serverInitiated === this.#isServer) {
-                return;
-            }
+				return;
+			}
 			if (!frame.id.canRecv(this.#isServer)) {
 				throw new Error("received write-only stream");
 			}
 
 			const reader = new ReadableStream<Uint8Array>({
 				start: (controller) => {
-                    stream = controller;
+					stream = controller;
 					this.#recvStreams.set(streamId, controller);
 				},
 				cancel: () => {
@@ -160,7 +156,7 @@ export default class WebTransportWs implements WebTransport {
 						code: VarInt.from(0),
 					});
 
-                    this.#recvStreams.delete(streamId);
+					this.#recvStreams.delete(streamId);
 				},
 			});
 
@@ -182,14 +178,14 @@ export default class WebTransportWs implements WebTransport {
 						]);
 					},
 					abort: (e) => {
-                        console.warn("abort", e);
+						console.warn("abort", e);
 						this.#sendPriorityFrame({
 							type: "reset_stream",
 							id: frame.id,
 							code: VarInt.from(0),
 						});
 
-                        this.#sendStreams.delete(streamId);
+						this.#sendStreams.delete(streamId);
 					},
 					close: async () => {
 						await Promise.race([
@@ -202,23 +198,23 @@ export default class WebTransportWs implements WebTransport {
 							this.closed,
 						]);
 
-                        this.#sendStreams.delete(streamId);
+						this.#sendStreams.delete(streamId);
 					},
 				});
 
-                this.#incomingBidirectionalStreams.enqueue({ readable: reader, writable: writer });
+				this.#incomingBidirectionalStreams.enqueue({ readable: reader, writable: writer });
 			} else {
-                this.#incomingUnidirectionalStreams.enqueue(reader);
-            }
+				this.#incomingUnidirectionalStreams.enqueue(reader);
+			}
 		}
 
-        if (frame.data.byteLength > 0) {
-            stream?.enqueue(frame.data);
-        }
+		if (frame.data.byteLength > 0) {
+			stream?.enqueue(frame.data);
+		}
 
 		if (frame.fin) {
 			stream?.close();
-            this.#recvStreams.delete(streamId);
+			this.#recvStreams.delete(streamId);
 		}
 	}
 
@@ -227,8 +223,8 @@ export default class WebTransportWs implements WebTransport {
 		const stream = this.#recvStreams.get(streamId);
 		if (!stream) return;
 
-        stream.error(new Error(`RESET_STREAM: ${frame.code.value}`));
-        this.#recvStreams.delete(streamId);
+		stream.error(new Error(`RESET_STREAM: ${frame.code.value}`));
+		this.#recvStreams.delete(streamId);
 	}
 
 	#handleStopSending(frame: Frame.StopSending) {
@@ -236,14 +232,14 @@ export default class WebTransportWs implements WebTransport {
 		const stream = this.#sendStreams.get(streamId);
 		if (!stream) return;
 
-        stream.error(new Error(`STOP_SENDING: ${frame.code.value}`));
-        this.#sendStreams.delete(streamId);
+		stream.error(new Error(`STOP_SENDING: ${frame.code.value}`));
+		this.#sendStreams.delete(streamId);
 
-        this.#sendPriorityFrame({
-            type: "reset_stream",
-            id: frame.id,
-            code: frame.code,
-        });
+		this.#sendPriorityFrame({
+			type: "reset_stream",
+			id: frame.id,
+			code: frame.code,
+		});
 	}
 
 	async #sendFrame(frame: Frame.Any) {
@@ -253,12 +249,12 @@ export default class WebTransportWs implements WebTransport {
 		}
 
 		const chunk = Frame.encode(frame);
-        this.#ws.send(chunk);
+		this.#ws.send(chunk);
 	}
 
 	#sendPriorityFrame(frame: Frame.Any) {
 		const chunk = Frame.encode(frame);
-			this.#ws.send(chunk);
+		this.#ws.send(chunk);
 	}
 
 	async createBidirectionalStream(): Promise<WebTransportBidirectionalStream> {
@@ -268,11 +264,7 @@ export default class WebTransportWs implements WebTransport {
 			throw this.#closeReason || new Error("Connection closed");
 		}
 
-		const streamId = Stream.Id.create(
-			this.#nextBiStreamId++,
-			Stream.Dir.Bi,
-			this.#isServer,
-		);
+		const streamId = Stream.Id.create(this.#nextBiStreamId++, Stream.Dir.Bi, this.#isServer);
 
 		const writer = new WritableStream<Uint8Array>({
 			start: (controller) => {
@@ -290,7 +282,7 @@ export default class WebTransportWs implements WebTransport {
 				]);
 			},
 			abort: (e) => {
-                console.warn("abort", e);
+				console.warn("abort", e);
 				this.#sendPriorityFrame({
 					type: "reset_stream",
 					id: streamId,
@@ -339,11 +331,7 @@ export default class WebTransportWs implements WebTransport {
 			throw this.#closed;
 		}
 
-		const streamId = Stream.Id.create(
-			this.#nextUniStreamId++,
-			Stream.Dir.Uni,
-			this.#isServer,
-		);
+		const streamId = Stream.Id.create(this.#nextUniStreamId++, Stream.Dir.Uni, this.#isServer);
 
 		const session = this;
 
@@ -363,7 +351,7 @@ export default class WebTransportWs implements WebTransport {
 				]);
 			},
 			abort(e) {
-                console.warn("abort", e);
+				console.warn("abort", e);
 				session.#sendPriorityFrame({
 					type: "reset_stream",
 					id: streamId,
@@ -390,20 +378,32 @@ export default class WebTransportWs implements WebTransport {
 		return writer;
 	}
 
-    #close(code: number, reason: string) {
+	#close(code: number, reason: string) {
 		this.#closedResolve({
 			closeCode: code,
 			reason,
 		});
 
-         // Fail active streams so consumers unblock
-        try { this.#incomingBidirectionalStreams.close(); } catch {}
-        try { this.#incomingUnidirectionalStreams.close(); } catch {}
-        for (const c of this.#sendStreams.values()) { try { c.error(this.#closed); } catch {} }
-        for (const c of this.#recvStreams.values()) { try { c.error(this.#closed); } catch {} }
-        this.#sendStreams.clear();
-        this.#recvStreams.clear();
-    }
+		// Fail active streams so consumers unblock
+		try {
+			this.#incomingBidirectionalStreams.close();
+		} catch {}
+		try {
+			this.#incomingUnidirectionalStreams.close();
+		} catch {}
+		for (const c of this.#sendStreams.values()) {
+			try {
+				c.error(this.#closed);
+			} catch {}
+		}
+		for (const c of this.#recvStreams.values()) {
+			try {
+				c.error(this.#closed);
+			} catch {}
+		}
+		this.#sendStreams.clear();
+		this.#recvStreams.clear();
+	}
 
 	close(info?: { closeCode?: number; reason?: string }) {
 		if (this.#closed) return;
@@ -421,7 +421,7 @@ export default class WebTransportWs implements WebTransport {
 			this.#ws.close();
 		}, 100);
 
-        this.#close(code, reason);
+		this.#close(code, reason);
 	}
 
 	get congestionControl(): string {

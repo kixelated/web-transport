@@ -1,21 +1,22 @@
 {
-  "name": "web-transport-workspace",
-  "private": true,
-  "type": "module",
-  "engines": {
-    "node": ">=18"
-  },
-  "scripts": {
-    "build": "pnpm -r build",
-    "dev": "pnpm -r dev",
-    "check": "pnpm -r check",
-    "clean": "pnpm -r clean && rimraf dist node_modules/.cache",
-    "install-all": "pnpm install --frozen-lockfile"
-  },
-  "devDependencies": {
-    "typescript": "^5.9.2",
-    "rimraf": "^6.0.1",
-    "@types/node": "^24.3.0",
-    "tsx": "^4.20.5"
-  }
+	"name": "web-transport-workspace",
+	"private": true,
+	"type": "module",
+	"engines": {
+		"node": ">=18"
+	},
+	"scripts": {
+		"build": "pnpm -r build",
+		"dev": "pnpm -r dev",
+		"check": "pnpm -r check",
+		"clean": "pnpm -r clean && rimraf dist node_modules/.cache",
+		"install-all": "pnpm install --frozen-lockfile"
+	},
+	"devDependencies": {
+		"typescript": "^5.9.2",
+		"rimraf": "^6.0.1",
+		"@types/node": "^24.3.0",
+		"tsx": "^4.20.5",
+		"@biomejs/biome": "^2.2.2"
+	}
 }
