@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-accept-unidirectional"
+description = "Enables the accept-unidirectional command without any pre-configured scope."
+commands.allow = ["accept-unidirectional"]
+
+[[permission]]
+identifier = "deny-accept-unidirectional"
+description = "Denies the accept-unidirectional command without any pre-configured scope."
+commands.deny = ["accept-unidirectional"]

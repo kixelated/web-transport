@@ -37,6 +37,10 @@ check:
 	# requires: cargo install cargo-sort
 	cargo sort --workspace --check
 
+	# JavaScript/TypeScript checks
+	pnpm install --frozen-lockfile
+	pnpm -r run check
+
 # Run any CI tests
 test:
 	cargo test
@@ -58,6 +62,9 @@ fix:
 
 	# And of course, make sure the formatting is correct.
 	cargo fmt --all
+
+	# JavaScript/TypeScript fixes
+	pnpm install
 
 # Upgrade any tooling
 upgrade:

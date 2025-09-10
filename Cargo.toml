@@ -3,6 +3,7 @@ members = [
     "web-transport",
     "web-transport-proto",
     "web-transport-quinn",
+    "web-transport-tauri",
     "web-transport-trait",
     "web-transport-wasm",
     "web-transport-ws",

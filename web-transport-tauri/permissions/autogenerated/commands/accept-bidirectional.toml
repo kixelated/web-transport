@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-accept-bidirectional"
+description = "Enables the accept-bidirectional command without any pre-configured scope."
+commands.allow = ["accept-bidirectional"]
+
+[[permission]]
+identifier = "deny-accept-bidirectional"
+description = "Denies the accept-bidirectional command without any pre-configured scope."
+commands.deny = ["accept-bidirectional"]

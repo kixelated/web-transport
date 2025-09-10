@@ -1,8 +1,8 @@
 {
-  "name": "@kixelated/web-transport-ws",
+  "name": "@kixelated/web-transport-tauri",
   "author": "Luke Curley <kixelated@gmail.com>",
-  "version": "0.1.2",
-  "description": "WebTransport polyfill using WebSockets",
+  "version": "0.1.0",
+  "description": "WebTransport polyfill using Tauri",
   "type": "module",
   "license": "(MIT OR Apache-2.0)",
   "repository": "github:kixelated/web-transport",
@@ -16,20 +16,21 @@
   "scripts": {
     "build": "rimraf dist && tsc && tsx ../scripts/package.ts",
     "dev": "tsc --watch",
-    "check": "tsc --noEmit",
-    "example": "tsx examples/client.ts",
-    "release": "tsx ../scripts/release.ts"
+    "check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "2.8.0",
+    "buffer": "^6.0.3"
   },
   "devDependencies": {
     "typescript": "^5.9.2",
-    "ws": "^8.16.0",
     "rimraf": "^6.0.1",
     "@types/node": "^24.3.0",
     "tsx": "^4.20.5"
   },
   "keywords": [
     "webtransport",
-    "websocket",
+    "tauri",
     "polyfill",
     "quic",
     "streams"
