@@ -77,6 +77,10 @@ impl WebTransport {
 			.inner
 			.close(payload.code, payload.reason.as_deref().unwrap_or(""));
 
+		// Clean up all stream resources
+		session.send.lock().unwrap().clear();
+		session.recv.lock().unwrap().clear();
+
 		Ok(CloseResponse {})
 	}
 

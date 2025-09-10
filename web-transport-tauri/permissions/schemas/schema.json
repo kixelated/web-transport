@@ -295,30 +295,6 @@
       "type": "string",
       "oneOf": [
         {
-          "description": "Enables the accept-bidirectional command without any pre-configured scope.",
-          "type": "string",
-          "const": "allow-accept-bidirectional",
-          "markdownDescription": "Enables the accept-bidirectional command without any pre-configured scope."
-        },
-        {
-          "description": "Denies the accept-bidirectional command without any pre-configured scope.",
-          "type": "string",
-          "const": "deny-accept-bidirectional",
-          "markdownDescription": "Denies the accept-bidirectional command without any pre-configured scope."
-        },
-        {
-          "description": "Enables the accept-unidirectional command without any pre-configured scope.",
-          "type": "string",
-          "const": "allow-accept-unidirectional",
-          "markdownDescription": "Enables the accept-unidirectional command without any pre-configured scope."
-        },
-        {
-          "description": "Denies the accept-unidirectional command without any pre-configured scope.",
-          "type": "string",
-          "const": "deny-accept-unidirectional",
-          "markdownDescription": "Denies the accept-unidirectional command without any pre-configured scope."
-        },
-        {
           "description": "Enables the accept command without any pre-configured scope.",
           "type": "string",
           "const": "allow-accept",
@@ -329,18 +305,6 @@
           "type": "string",
           "const": "deny-accept",
           "markdownDescription": "Denies the accept command without any pre-configured scope."
-        },
-        {
-          "description": "Enables the close-stream command without any pre-configured scope.",
-          "type": "string",
-          "const": "allow-close-stream",
-          "markdownDescription": "Enables the close-stream command without any pre-configured scope."
-        },
-        {
-          "description": "Denies the close-stream command without any pre-configured scope.",
-          "type": "string",
-          "const": "deny-close-stream",
-          "markdownDescription": "Denies the close-stream command without any pre-configured scope."
         },
         {
           "description": "Enables the close command without any pre-configured scope.",
@@ -379,30 +343,6 @@
           "markdownDescription": "Denies the connect command without any pre-configured scope."
         },
         {
-          "description": "Enables the create-bidirectional command without any pre-configured scope.",
-          "type": "string",
-          "const": "allow-create-bidirectional",
-          "markdownDescription": "Enables the create-bidirectional command without any pre-configured scope."
-        },
-        {
-          "description": "Denies the create-bidirectional command without any pre-configured scope.",
-          "type": "string",
-          "const": "deny-create-bidirectional",
-          "markdownDescription": "Denies the create-bidirectional command without any pre-configured scope."
-        },
-        {
-          "description": "Enables the create-unidirectional command without any pre-configured scope.",
-          "type": "string",
-          "const": "allow-create-unidirectional",
-          "markdownDescription": "Enables the create-unidirectional command without any pre-configured scope."
-        },
-        {
-          "description": "Denies the create-unidirectional command without any pre-configured scope.",
-          "type": "string",
-          "const": "deny-create-unidirectional",
-          "markdownDescription": "Denies the create-unidirectional command without any pre-configured scope."
-        },
-        {
           "description": "Enables the open command without any pre-configured scope.",
           "type": "string",
           "const": "allow-open",
@@ -413,30 +353,6 @@
           "type": "string",
           "const": "deny-open",
           "markdownDescription": "Denies the open command without any pre-configured scope."
-        },
-        {
-          "description": "Enables the ping command without any pre-configured scope.",
-          "type": "string",
-          "const": "allow-ping",
-          "markdownDescription": "Enables the ping command without any pre-configured scope."
-        },
-        {
-          "description": "Denies the ping command without any pre-configured scope.",
-          "type": "string",
-          "const": "deny-ping",
-          "markdownDescription": "Denies the ping command without any pre-configured scope."
-        },
-        {
-          "description": "Enables the read-stream command without any pre-configured scope.",
-          "type": "string",
-          "const": "allow-read-stream",
-          "markdownDescription": "Enables the read-stream command without any pre-configured scope."
-        },
-        {
-          "description": "Denies the read-stream command without any pre-configured scope.",
-          "type": "string",
-          "const": "deny-read-stream",
-          "markdownDescription": "Denies the read-stream command without any pre-configured scope."
         },
         {
           "description": "Enables the read command without any pre-configured scope.",
@@ -451,18 +367,6 @@
           "markdownDescription": "Denies the read command without any pre-configured scope."
         },
         {
-          "description": "Enables the reset-stream command without any pre-configured scope.",
-          "type": "string",
-          "const": "allow-reset-stream",
-          "markdownDescription": "Enables the reset-stream command without any pre-configured scope."
-        },
-        {
-          "description": "Denies the reset-stream command without any pre-configured scope.",
-          "type": "string",
-          "const": "deny-reset-stream",
-          "markdownDescription": "Denies the reset-stream command without any pre-configured scope."
-        },
-        {
           "description": "Enables the reset command without any pre-configured scope.",
           "type": "string",
           "const": "allow-reset",
@@ -473,18 +377,6 @@
           "type": "string",
           "const": "deny-reset",
           "markdownDescription": "Denies the reset command without any pre-configured scope."
-        },
-        {
-          "description": "Enables the write-stream command without any pre-configured scope.",
-          "type": "string",
-          "const": "allow-write-stream",
-          "markdownDescription": "Enables the write-stream command without any pre-configured scope."
-        },
-        {
-          "description": "Denies the write-stream command without any pre-configured scope.",
-          "type": "string",
-          "const": "deny-write-stream",
-          "markdownDescription": "Denies the write-stream command without any pre-configured scope."
         },
         {
           "description": "Enables the write command without any pre-configured scope.",

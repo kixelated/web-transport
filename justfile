@@ -11,7 +11,7 @@ default:
 
 # Install any required dependencies.
 setup:
-	cargo install -y cargo-shear cargo-sort cargo-upgrades cargo-edit
+	cargo install cargo-shear cargo-sort cargo-upgrades cargo-edit
 
 # Run the CI checks
 check:
