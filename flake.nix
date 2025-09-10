@@ -37,6 +37,7 @@
           pkgs.just
           pkgs.pkg-config
           pkgs.glib
+          pkgs.gtk3
         ];
       in
       {
