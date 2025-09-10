@@ -35,6 +35,8 @@
 
         tools = [
           pkgs.just
+          pkgs.pkg-config
+          pkgs.glib
         ];
       in
       {
