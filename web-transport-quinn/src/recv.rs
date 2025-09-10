@@ -75,10 +75,13 @@ impl RecvStream {
         }
     }
 
-    /// Get the QUIC stream ID of this stream.
+    /// Return the underlying QUIC stream ID.
     ///
-    /// This is NOT a per-session stream ID and should not be used for enforcing any
-    /// per-session stream limit.
+    /// > **Warning**
+    /// >
+    /// > WebTransport sessions share the QUIC connection with HTTP/3 and potentially other sessions.
+    /// > The [quinn::StreamId::index] might not increment by 1 like expected for normal QUIC streams.
+    /// > As a result, the Javascript WebTransport API does not expose the Stream ID on purpose.
     pub fn quic_id(&self) -> quinn::StreamId {
         self.inner.id()
     }
