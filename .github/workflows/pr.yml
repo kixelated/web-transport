@@ -12,12 +12,13 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
-      # Install Rust with clippy/rustfmt
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@v1
         with:
-          target: wasm32-unknown-unknown
+          toolchain: stable
+          targets: wasm32-unknown-unknown
           components: clippy, rustfmt
 
       # Install Just to run CI scripts
@@ -27,8 +28,6 @@ jobs:
       - uses: cargo-bins/cargo-binstall@main
       - run: just setup-tools
 
-      # Set RUSTFLAGS
-      - run: echo "RUSTFLAGS=--cfg=web_sys_unstable_apis" >> $GITHUB_ENV
-
       # Make sure u guys don't write bad code
       - run: just check
+      - run: just test

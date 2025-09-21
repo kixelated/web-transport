@@ -3,7 +3,6 @@ use std::sync::Arc;
 use thiserror::Error;
 
 use crate::{ConnectError, SettingsError};
-use quinn::rustls;
 
 /// An error returned when connecting to a WebTransport endpoint.
 #[derive(Error, Debug, Clone)]
@@ -32,6 +31,7 @@ pub enum ClientError {
     #[error("invalid DNS name: {0}")]
     InvalidDnsName(String),
 
+    #[cfg(any(feature = "aws-lc-rs", feature = "ring"))]
     #[error("rustls error: {0}")]
     Rustls(#[from] rustls::Error),
 }
@@ -206,6 +206,7 @@ pub enum ServerError {
     #[error("io error: {0}")]
     IoError(Arc<std::io::Error>),
 
+    #[cfg(any(feature = "aws-lc-rs", feature = "ring"))]
     #[error("rustls error: {0}")]
     Rustls(#[from] rustls::Error),
 }
