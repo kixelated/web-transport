@@ -1,0 +1,36 @@
+// This has to be in the root otherwise the VSCode plugin will not work out of the box.
+{
+	"$schema": "https://biomejs.dev/schemas/2.2.3/schema.json",
+	"vcs": {
+		"enabled": true,
+		"clientKind": "git",
+		"useIgnoreFile": true
+	},
+	"formatter": {
+		// We repeat the editorconfig settings here because biome has spotty mono-repo support.
+		// "useEditorconfig": true,
+		"lineWidth": 120,
+		"indentStyle": "tab",
+		"indentWidth": 4,
+		"lineEnding": "lf"
+	},
+	"files": {
+		"includes": ["**", "!**/permissions/schemas/*.json"]
+	},
+	"linter": {
+		"rules": {
+			"style": {
+				"useNodejsImportProtocol": "off"
+			},
+			"suspicious": {
+				// Some runtimes need ts-ignore
+				"noTsIgnore": "off"
+			}
+		}
+	},
+	"javascript": {
+		"formatter": {
+			"quoteStyle": "double"
+		}
+	}
+}

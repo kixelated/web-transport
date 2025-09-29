@@ -1,0 +1,12 @@
+[default]
+description = "Default permissions for the plugin"
+permissions = [
+	"allow-connect",
+	"allow-close",
+	"allow-closed",
+	"allow-accept",
+	"allow-open",
+	"allow-read",
+	"allow-write",
+	"allow-reset",
+]

@@ -30,6 +30,7 @@ This project is broken up into quite a few different crates:
 -   [web-transport](web-transport) provides a generic interface, delegating to [web-transport-quinn](web-transport-quinn) or [web-transport-wasm](web-transport-wasm) depending on the platform.
 -   [web-transport-quinn](web-transport-quinn) mirrors the [Quinn API](https://docs.rs/quinn/latest/quinn/index.html), abstracting away the HTTP/3 setup.
 -   [web-transport-wasm](web-transport-wasm) wraps the [browser API](https://developer.mozilla.org/en-US/docs/Web/API/WebTransport_API)
-- [web-transport-ws](web-transport-ws) crudely implements the WebTransport API over WebSockets for backwards compatibility. Also includes a NPM package.
+- [web-transport-tauri](web-transport-tauri) polyfills the WebTransport API using Tauri. The web client communicates with the Rust client via a JSON RPC.
+- [web-transport-ws](web-transport-ws) polyfills the WebTransport API using WebSockets. The web client communicates with the Rust server.
 - [web-transport-trait](web-transport-trait) defines an async trait, currently implemented by [web-transport-quinn](web-transport-quinn) and [web-transport-ws](web-transport-ws).
 -   [web-transport-proto](web-transport-proto) a bare minimum implementation of HTTP/3 just to establish the WebTransport session.

@@ -1,0 +1,6 @@
+packages:
+  - web-transport-ws
+  - web-transport-tauri
+
+onlyBuiltDependencies:
+  - esbuild
