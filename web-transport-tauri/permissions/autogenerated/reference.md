@@ -25,58 +25,6 @@ Default permissions for the plugin
 <tr>
 <td>
 
-`web-transport-tauri:allow-accept-bidirectional`
-
-</td>
-<td>
-
-Enables the accept-bidirectional command without any pre-configured scope.
-
-</td>
-</tr>
-
-<tr>
-<td>
-
-`web-transport-tauri:deny-accept-bidirectional`
-
-</td>
-<td>
-
-Denies the accept-bidirectional command without any pre-configured scope.
-
-</td>
-</tr>
-
-<tr>
-<td>
-
-`web-transport-tauri:allow-accept-unidirectional`
-
-</td>
-<td>
-
-Enables the accept-unidirectional command without any pre-configured scope.
-
-</td>
-</tr>
-
-<tr>
-<td>
-
-`web-transport-tauri:deny-accept-unidirectional`
-
-</td>
-<td>
-
-Denies the accept-unidirectional command without any pre-configured scope.
-
-</td>
-</tr>
-
-<tr>
-<td>
-
 `web-transport-tauri:allow-accept`
 
 </td>
@@ -96,32 +44,6 @@ Enables the accept command without any pre-configured scope.
 <td>
 
 Denies the accept command without any pre-configured scope.
-
-</td>
-</tr>
-
-<tr>
-<td>
-
-`web-transport-tauri:allow-close-stream`
-
-</td>
-<td>
-
-Enables the close-stream command without any pre-configured scope.
-
-</td>
-</tr>
-
-<tr>
-<td>
-
-`web-transport-tauri:deny-close-stream`
-
-</td>
-<td>
-
-Denies the close-stream command without any pre-configured scope.
 
 </td>
 </tr>
@@ -207,58 +129,6 @@ Denies the connect command without any pre-configured scope.
 <tr>
 <td>
 
-`web-transport-tauri:allow-create-bidirectional`
-
-</td>
-<td>
-
-Enables the create-bidirectional command without any pre-configured scope.
-
-</td>
-</tr>
-
-<tr>
-<td>
-
-`web-transport-tauri:deny-create-bidirectional`
-
-</td>
-<td>
-
-Denies the create-bidirectional command without any pre-configured scope.
-
-</td>
-</tr>
-
-<tr>
-<td>
-
-`web-transport-tauri:allow-create-unidirectional`
-
-</td>
-<td>
-
-Enables the create-unidirectional command without any pre-configured scope.
-
-</td>
-</tr>
-
-<tr>
-<td>
-
-`web-transport-tauri:deny-create-unidirectional`
-
-</td>
-<td>
-
-Denies the create-unidirectional command without any pre-configured scope.
-
-</td>
-</tr>
-
-<tr>
-<td>
-
 `web-transport-tauri:allow-open`
 
 </td>
@@ -278,58 +148,6 @@ Enables the open command without any pre-configured scope.
 <td>
 
 Denies the open command without any pre-configured scope.
-
-</td>
-</tr>
-
-<tr>
-<td>
-
-`web-transport-tauri:allow-ping`
-
-</td>
-<td>
-
-Enables the ping command without any pre-configured scope.
-
-</td>
-</tr>
-
-<tr>
-<td>
-
-`web-transport-tauri:deny-ping`
-
-</td>
-<td>
-
-Denies the ping command without any pre-configured scope.
-
-</td>
-</tr>
-
-<tr>
-<td>
-
-`web-transport-tauri:allow-read-stream`
-
-</td>
-<td>
-
-Enables the read-stream command without any pre-configured scope.
-
-</td>
-</tr>
-
-<tr>
-<td>
-
-`web-transport-tauri:deny-read-stream`
-
-</td>
-<td>
-
-Denies the read-stream command without any pre-configured scope.
 
 </td>
 </tr>
@@ -363,32 +181,6 @@ Denies the read command without any pre-configured scope.
 <tr>
 <td>
 
-`web-transport-tauri:allow-reset-stream`
-
-</td>
-<td>
-
-Enables the reset-stream command without any pre-configured scope.
-
-</td>
-</tr>
-
-<tr>
-<td>
-
-`web-transport-tauri:deny-reset-stream`
-
-</td>
-<td>
-
-Denies the reset-stream command without any pre-configured scope.
-
-</td>
-</tr>
-
-<tr>
-<td>
-
 `web-transport-tauri:allow-reset`
 
 </td>
@@ -408,32 +200,6 @@ Enables the reset command without any pre-configured scope.
 <td>
 
 Denies the reset command without any pre-configured scope.
-
-</td>
-</tr>
-
-<tr>
-<td>
-
-`web-transport-tauri:allow-write-stream`
-
-</td>
-<td>
-
-Enables the write-stream command without any pre-configured scope.
-
-</td>
-</tr>
-
-<tr>
-<td>
-
-`web-transport-tauri:deny-write-stream`
-
-</td>
-<td>
-
-Denies the write-stream command without any pre-configured scope.
 
 </td>
 </tr>
