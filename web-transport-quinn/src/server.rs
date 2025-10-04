@@ -1,11 +1,16 @@
+#[cfg(any(feature = "aws-lc-rs", feature = "ring"))]
 use std::sync::Arc;
 
-use crate::{crypto, CongestionControl, Connect, ServerError, Session, Settings};
-
 use futures::{future::BoxFuture, stream::FuturesUnordered, StreamExt};
+#[cfg(any(feature = "aws-lc-rs", feature = "ring"))]
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use url::Url;
 
+#[cfg(any(feature = "aws-lc-rs", feature = "ring"))]
+use crate::{crypto, CongestionControl};
+use crate::{Connect, ServerError, Session, Settings};
+
+#[cfg(any(feature = "aws-lc-rs", feature = "ring"))]
 /// Construct a WebTransport [Server] using sane defaults.
 ///
 /// This is optional; advanced users may use [Server::new] directly.
@@ -16,12 +21,14 @@ pub struct ServerBuilder {
         Option<Arc<dyn quinn::congestion::ControllerFactory + Send + Sync + 'static>>,
 }
 
+#[cfg(any(feature = "aws-lc-rs", feature = "ring"))]
 impl Default for ServerBuilder {
     fn default() -> Self {
         Self::new()
     }
 }
 
+#[cfg(any(feature = "aws-lc-rs", feature = "ring"))]
 impl ServerBuilder {
     /// Create a server builder with sane defaults.
     pub fn new() -> Self {

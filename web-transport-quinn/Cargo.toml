@@ -11,11 +11,13 @@ edition = "2021"
 keywords = ["quic", "http3", "webtransport"]
 categories = ["network-programming", "web-programming"]
 
+[package.metadata.docs.rs]
+all-features = true
+
 [features]
 default = ["aws-lc-rs"]
 aws-lc-rs = ["quinn/rustls-aws-lc-rs", "rustls/aws-lc-rs"]
 ring = ["quinn/rustls-ring", "rustls/ring"]
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
 bytes = "1"

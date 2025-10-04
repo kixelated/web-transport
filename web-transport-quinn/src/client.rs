@@ -1,13 +1,16 @@
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 
-use crate::crypto;
+#[cfg(any(feature = "aws-lc-rs", feature = "ring"))]
+use quinn::crypto::rustls::QuicClientConfig;
+use rustls::{client::danger::ServerCertVerifier, pki_types::CertificateDer};
 use tokio::net::lookup_host;
 use url::{Host, Url};
 
-use crate::{ClientError, Session, ALPN};
-use quinn::{crypto::rustls::QuicClientConfig, rustls};
-use rustls::{client::danger::ServerCertVerifier, pki_types::CertificateDer};
+use crate::crypto;
+#[cfg(any(feature = "aws-lc-rs", feature = "ring"))]
+use crate::ALPN;
+use crate::{ClientError, Session};
 
 // Copies the Web options, hiding the actual implementation.
 /// Allows specifying a class of congestion control algorithm.
@@ -17,6 +20,7 @@ pub enum CongestionControl {
     LowLatency,
 }
 
+#[cfg(any(feature = "aws-lc-rs", feature = "ring"))]
 /// Construct a WebTransport [Client] using sane defaults.
 ///
 /// This is optional; advanced users may use [Client::new] directly.
@@ -26,6 +30,7 @@ pub struct ClientBuilder {
         Option<Arc<dyn quinn::congestion::ControllerFactory + Send + Sync + 'static>>,
 }
 
+#[cfg(any(feature = "aws-lc-rs", feature = "ring"))]
 impl ClientBuilder {
     /// Create a Client builder, which can be used to establish multiple [Session]s.
     pub fn new() -> Self {
@@ -164,6 +169,7 @@ impl ClientBuilder {
     }
 }
 
+#[cfg(any(feature = "aws-lc-rs", feature = "ring"))]
 impl Default for ClientBuilder {
     fn default() -> Self {
         Self::new()
@@ -224,12 +230,14 @@ impl Client {
     }
 }
 
+#[cfg(any(feature = "aws-lc-rs", feature = "ring"))]
 impl Default for Client {
     fn default() -> Self {
         ClientBuilder::new().with_system_roots().unwrap()
     }
 }
 
+#[cfg_attr(not(any(feature = "aws-lc-rs", feature = "ring")), allow(dead_code))]
 #[derive(Debug)]
 struct ServerFingerprints {
     provider: crypto::Provider,
