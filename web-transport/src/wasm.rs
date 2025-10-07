@@ -48,6 +48,7 @@ impl ClientBuilder {
     }
 }
 
+#[derive(Clone, Debug)]
 pub struct Client {
     inner: web_transport_wasm::Client,
 }

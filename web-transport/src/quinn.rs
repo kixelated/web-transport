@@ -47,6 +47,7 @@ impl ClientBuilder {
 }
 
 /// Used to dial multiple [Session]s.
+#[derive(Clone, Debug)]
 pub struct Client {
     inner: quinn::Client,
 }
