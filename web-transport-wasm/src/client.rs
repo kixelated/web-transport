@@ -7,13 +7,12 @@ use crate::{Error, Session};
 
 pub use web_sys::WebTransportCongestionControl as CongestionControl;
 
-#[derive(Default, Debug)]
+/// See [`WebTransportOptions`].
+#[derive(Debug, Default)]
 pub struct ClientBuilder {
-    // Check https://rustwasm.github.io/wasm-bindgen/api/web_sys/struct.WebTransportOptions.html
     options: WebTransportOptions,
 }
 
-// Check https://rustwasm.github.io/wasm-bindgen/api/web_sys/struct.WebTransportOptions.html
 impl ClientBuilder {
     pub fn new() -> Self {
         Self::default()
@@ -66,9 +65,10 @@ impl ClientBuilder {
 }
 
 /// Build a client with the given URL and options.
-#[derive(Default, Debug)]
+///
+/// See [`WebTransportOptions`].
+#[derive(Clone, Debug, Default)]
 pub struct Client {
-    // Check https://rustwasm.github.io/wasm-bindgen/api/web_sys/struct.WebTransportOptions.html
     options: WebTransportOptions,
 }
 

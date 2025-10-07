@@ -177,6 +177,7 @@ impl Default for ClientBuilder {
 }
 
 /// A client for connecting to a WebTransport server.
+#[derive(Clone, Debug)]
 pub struct Client {
     endpoint: quinn::Endpoint,
     config: quinn::ClientConfig,
