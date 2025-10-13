@@ -186,7 +186,7 @@ pub trait RecvStream: Send {
     ) -> impl Future<Output = Result<Option<Bytes>, Self::Error>> + Send {
         async move {
             // Don't allocate too much. Write your own if you want to increase this buffer.
-            let mut buf = BytesMut::with_capacity(max.max(8 * 1024));
+            let mut buf = BytesMut::with_capacity(max.min(8 * 1024));
 
             // TODO Test this, I think it will work?
             Ok(self.read_buf(&mut buf).await?.map(|_| buf.freeze()))
