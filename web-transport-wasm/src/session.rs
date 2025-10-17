@@ -1,3 +1,8 @@
+#[cfg(not(target_family = "wasm"))]
+compile_error!(
+    "web-transport-wasm requires a WASM platform. Compile with --target=wasm32-unknown-unknown"
+);
+
 use bytes::Bytes;
 use js_sys::Uint8Array;
 use url::Url;
