@@ -29,7 +29,7 @@ impl Setting {
             return false;
         }
 
-        #[allow(clippy::manual_is_multiple_of)]
+        #[allow(unknown_lints, clippy::manual_is_multiple_of)]
         {
             (val - 0x21) % 0x1f == 0
         }
