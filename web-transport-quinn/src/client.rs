@@ -125,21 +125,13 @@ impl ClientBuilder {
         self.build(crypto)
     }
 
-    /// Ignore the server's provided certificate, always accepting it.
+    /// Access dangerous configuration options.
     ///
-    /// # Safety
-    /// This makes the connection vulnerable to man-in-the-middle attacks.
-    /// Only use it in secure environments, such as in local development or over a VPN connection.
-    pub unsafe fn with_no_certificate_verification(self) -> Result<Client, ClientError> {
-        let noop = NoCertificateVerification(self.provider.clone());
-
-        let crypto = self
-            .builder()
-            .dangerous()
-            .with_custom_certificate_verifier(Arc::new(noop))
-            .with_no_client_auth();
-
-        self.build(crypto)
+    /// This method returns a builder that provides access to potentially insecure
+    /// TLS configurations. These options are opt-in and require explicit acknowledgment
+    /// through the builder pattern, making the security implications clear at the call site.
+    pub fn dangerous(self) -> DangerousClientBuilder {
+        DangerousClientBuilder { inner: self }
     }
 
     fn builder(&self) -> rustls::ConfigBuilder<rustls::ClientConfig, rustls::WantsVerifier> {
@@ -173,6 +165,39 @@ impl ClientBuilder {
 impl Default for ClientBuilder {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(any(feature = "aws-lc-rs", feature = "ring"))]
+/// Builder for dangerous TLS configuration options.
+///
+/// This builder provides access to potentially insecure TLS configurations.
+/// These options should only be used when you understand the security implications,
+/// such as in local development or over a secure VPN connection.
+pub struct DangerousClientBuilder {
+    inner: ClientBuilder,
+}
+
+#[cfg(any(feature = "aws-lc-rs", feature = "ring"))]
+impl DangerousClientBuilder {
+    /// Disable certificate verification entirely.
+    ///
+    /// This makes the connection vulnerable to man-in-the-middle attacks.
+    /// Only use this in secure environments, such as in local development or over a VPN connection.
+    ///
+    /// This method is safe in the Rust sense (no memory unsafety), but dangerous in the
+    /// security sense, hence the explicit `dangerous()` builder requirement.
+    pub fn with_no_certificate_verification(self) -> Result<Client, ClientError> {
+        let noop = NoCertificateVerification(self.inner.provider.clone());
+
+        let crypto = self
+            .inner
+            .builder()
+            .dangerous()
+            .with_custom_certificate_verifier(Arc::new(noop))
+            .with_no_client_auth();
+
+        self.inner.build(crypto)
     }
 }
 

@@ -34,7 +34,7 @@ async fn main() -> anyhow::Result<()> {
         log::warn!("disabling TLS certificate verification; a MITM attack is possible");
 
         // Accept any certificate.
-        unsafe { client.with_no_certificate_verification()? }
+        client.dangerous().with_no_certificate_verification()?
     } else if let Some(path) = &args.tls_cert {
         // Read the PEM certificate chain
         let chain = fs::File::open(path).context("failed to open cert file")?;
