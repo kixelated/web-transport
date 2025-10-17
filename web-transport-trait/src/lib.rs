@@ -60,7 +60,7 @@ pub trait Session: Clone + MaybeSend + MaybeSync + 'static {
     fn close(&self, code: u32, reason: &str);
 
     /// Block until the connection is closed.
-    fn closed(&self) -> impl Future<Output = Self::Error> + MaybeSend;
+    fn closed(&self) -> impl Future<Output = Result<(), Self::Error>> + MaybeSend;
 }
 
 /// An outgoing stream of bytes to the peer.

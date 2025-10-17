@@ -162,8 +162,8 @@ impl web_transport_trait::Session for Session {
         Self::close(self, code, reason);
     }
 
-    async fn closed(&self) -> Self::Error {
-        Self::closed(self).await
+    async fn closed(&self) -> Result<(), Self::Error> {
+        self.closed_inner().await
     }
 
     fn send_datagram(&self, _data: Bytes) -> Result<(), Self::Error> {
