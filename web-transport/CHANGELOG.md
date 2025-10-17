@@ -27,6 +27,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.7](https://github.com/kixelated/web-transport/compare/web-transport-v0.9.6...web-transport-v0.9.7) - 2025-10-17
+
+### Other
+
+- Add impl Clone for Client ([#104](https://github.com/kixelated/web-transport/pull/104))
+
 ## [0.9.4](https://github.com/kixelated/web-transport/compare/web-transport-v0.9.3...web-transport-v0.9.4) - 2025-07-20
 
 ### Other

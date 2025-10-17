@@ -22,6 +22,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.8](https://github.com/kixelated/web-transport/compare/web-transport-proto-v0.2.7...web-transport-proto-v0.2.8) - 2025-10-17
+
+### Other
+
+- Make traits compatible with WASM ([#107](https://github.com/kixelated/web-transport/pull/107))
+- Check all feature combinations ([#102](https://github.com/kixelated/web-transport/pull/102))
+
 ## [0.2.6](https://github.com/kixelated/web-transport/compare/web-transport-proto-v0.2.5...web-transport-proto-v0.2.6) - 2025-05-15
 
 ### Other
