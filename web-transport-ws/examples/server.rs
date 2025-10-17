@@ -65,7 +65,9 @@ async fn run(stream: tokio::net::TcpStream) -> anyhow::Result<()> {
 
                 println!("Bidirectional stream closed");
             }
-            err = session.closed() => return Err(err.into()),
+            result = session.closed() => {
+                return result.map_err(|e| e.into());
+            }
         }
     }
 }

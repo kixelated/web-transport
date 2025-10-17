@@ -458,13 +458,15 @@ impl generic::Session for Session {
             .ok();
     }
 
-    async fn closed(&self) -> Self::Error {
+    async fn closed(&self) -> Result<(), Self::Error> {
         let mut closed = self.closed.subscribe();
-        closed
+        let err = closed
             .wait_for(|err| err.is_some())
             .await
             .map(|e| e.clone().unwrap_or(Error::Closed))
-            .unwrap_or(Error::Closed)
+            .unwrap_or(Error::Closed);
+
+        Err(err)
     }
 
     fn send_datagram(&self, _payload: Bytes) -> Result<(), Self::Error> {

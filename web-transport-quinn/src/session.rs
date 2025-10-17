@@ -558,8 +558,11 @@ impl web_transport_trait::Session for Session {
         Self::close(self, code, reason.as_bytes());
     }
 
-    async fn closed(&self) -> Self::Error {
-        Self::closed(self).await
+    async fn closed(&self) -> Result<(), Self::Error> {
+        match Self::closed(self).await {
+            SessionError::ConnectionError(quinn::ConnectionError::LocallyClosed) => Ok(()),
+            err => Err(err),
+        }
     }
 
     fn send_datagram(&self, data: Bytes) -> Result<(), Self::Error> {
