@@ -52,14 +52,14 @@ test:
 
 # Automatically fix some issues.
 fix:
-	cargo fix --allow-staged --workspace --exclude web-transport-wasm --all-targets --all-features
-	cargo clippy --fix --allow-staged --workspace --exclude web-transport-wasm --all-targets --all-features
+	cargo fix --allow-staged --allow-dirty --workspace --exclude web-transport-wasm --all-targets --all-features
+	cargo clippy --fix --allow-staged --allow-dirty --workspace --exclude web-transport-wasm --all-targets --all-features
 
 	# Do the same but explicitly use the WASM target.
-	cargo fix --allow-staged --target wasm32-unknown-unknown -p web-transport --all-targets --all-features
-	cargo fix --allow-staged --target wasm32-unknown-unknown -p web-transport-wasm --all-targets --all-features
-	cargo clippy --fix --allow-staged --target wasm32-unknown-unknown -p web-transport --all-targets --all-features
-	cargo clippy --fix --allow-staged --target wasm32-unknown-unknown -p web-transport-wasm --all-targets --all-features
+	cargo fix --allow-staged --allow-dirty --target wasm32-unknown-unknown -p web-transport --all-targets --all-features
+	cargo fix --allow-staged --allow-dirty --target wasm32-unknown-unknown -p web-transport-wasm --all-targets --all-features
+	cargo clippy --fix --allow-staged --allow-dirty --target wasm32-unknown-unknown -p web-transport --all-targets --all-features
+	cargo clippy --fix --allow-staged --allow-dirty --target wasm32-unknown-unknown -p web-transport-wasm --all-targets --all-features
 
 	# requires: cargo install cargo-shear
 	cargo shear --fix
