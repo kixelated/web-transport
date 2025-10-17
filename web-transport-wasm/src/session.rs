@@ -28,7 +28,7 @@ impl Session {
     }
 
     /// Accept a new unidirectional stream from the peer.
-    pub async fn accept_uni(&mut self) -> Result<RecvStream, Error> {
+    pub async fn accept_uni(&self) -> Result<RecvStream, Error> {
         let mut reader = Reader::new(&self.inner.incoming_unidirectional_streams())?;
 
         match reader.read().await? {
@@ -38,7 +38,7 @@ impl Session {
     }
 
     /// Accept a new bidirectional stream from the peer.
-    pub async fn accept_bi(&mut self) -> Result<(SendStream, RecvStream), Error> {
+    pub async fn accept_bi(&self) -> Result<(SendStream, RecvStream), Error> {
         let mut reader = Reader::new(&self.inner.incoming_bidirectional_streams())?;
 
         let stream: WebTransportBidirectionalStream = match reader.read().await? {
@@ -53,7 +53,7 @@ impl Session {
     }
 
     /// Creates a new bidirectional stream.
-    pub async fn open_bi(&mut self) -> Result<(SendStream, RecvStream), Error> {
+    pub async fn open_bi(&self) -> Result<(SendStream, RecvStream), Error> {
         let stream: WebTransportBidirectionalStream =
             JsFuture::from(self.inner.create_bidirectional_stream())
                 .await?
@@ -66,7 +66,7 @@ impl Session {
     }
 
     /// Creates a new unidirectional stream.
-    pub async fn open_uni(&mut self) -> Result<SendStream, Error> {
+    pub async fn open_uni(&self) -> Result<SendStream, Error> {
         let stream: WebTransportSendStream =
             JsFuture::from(self.inner.create_unidirectional_stream())
                 .await?
@@ -77,21 +77,21 @@ impl Session {
     }
 
     /// Send a datagram over the network.
-    pub async fn send_datagram(&mut self, payload: Bytes) -> Result<(), Error> {
+    pub async fn send_datagram(&self, payload: Bytes) -> Result<(), Error> {
         let mut writer = Writer::new(&self.inner.datagrams().writable())?;
         writer.write(&Uint8Array::from(payload.as_ref())).await?;
         Ok(())
     }
 
     /// Receive a datagram over the network.
-    pub async fn recv_datagram(&mut self) -> Result<Bytes, Error> {
+    pub async fn recv_datagram(&self) -> Result<Bytes, Error> {
         let mut reader = Reader::new(&self.inner.datagrams().readable())?;
         let data: Uint8Array = reader.read().await?.unwrap_or_default();
         Ok(data.to_vec().into())
     }
 
     /// Close the session with the given error code and reason.
-    pub fn close(&mut self, code: u32, reason: &str) {
+    pub fn close(&self, code: u32, reason: &str) {
         let info = WebTransportCloseInfo::new();
         info.set_close_code(code);
         info.set_reason(reason);
