@@ -31,6 +31,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0](https://github.com/kixelated/web-transport/compare/web-transport-quinn-v0.8.1...web-transport-quinn-v0.9.0) - 2025-10-17
+
+### Other
+
+- Change web-transport-trait::Session::closed() to return a Result ([#110](https://github.com/kixelated/web-transport/pull/110))
+- Use workspace dependencies. ([#108](https://github.com/kixelated/web-transport/pull/108))
+- Don't force users to unsafe. ([#109](https://github.com/kixelated/web-transport/pull/109))
+- Add impl Clone for Client ([#104](https://github.com/kixelated/web-transport/pull/104))
+- Check all feature combinations ([#102](https://github.com/kixelated/web-transport/pull/102))
+- Add quic_id method to SendStream / RecvStream ([#93](https://github.com/kixelated/web-transport/pull/93))
+
 ## [0.7.3](https://github.com/kixelated/web-transport/compare/web-transport-quinn-v0.7.2...web-transport-quinn-v0.7.3) - 2025-07-20
 
 ### Other

@@ -11,4 +11,4 @@ resolver = "2"
 
 [workspace.dependencies]
 web-transport-proto = { path = "web-transport-proto", version = "0.2" }
-web-transport-trait = { path = "web-transport-trait", version = "0.1" }
+web-transport-trait = { path = "web-transport-trait", version = "0.2" }
