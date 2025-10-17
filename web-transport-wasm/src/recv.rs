@@ -93,3 +93,24 @@ impl Drop for RecvStream {
         self.reader.abort("dropped");
     }
 }
+
+impl web_transport_trait::RecvStream for RecvStream {
+    type Error = Error;
+
+    fn stop(&mut self, code: u32) {
+        Self::stop(self, &format!("code = {code}"));
+    }
+
+    async fn read(&mut self, mut dst: &mut [u8]) -> Result<Option<usize>, Self::Error> {
+        Self::read_buf(self, &mut dst).await
+    }
+
+    async fn read_chunk(&mut self, max: usize) -> Result<Option<Bytes>, Self::Error> {
+        Self::read(self, max).await
+    }
+
+    async fn closed(&mut self) -> Result<(), Self::Error> {
+        Self::closed(self).await?;
+        Ok(())
+    }
+}

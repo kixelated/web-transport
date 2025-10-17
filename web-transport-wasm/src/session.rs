@@ -136,3 +136,45 @@ impl PartialEq for Session {
 }
 
 impl Eq for Session {}
+
+impl web_transport_trait::Session for Session {
+    type SendStream = SendStream;
+    type RecvStream = RecvStream;
+    type Error = Error;
+
+    async fn accept_uni(&self) -> Result<Self::RecvStream, Self::Error> {
+        Self::accept_uni(self).await
+    }
+
+    async fn accept_bi(&self) -> Result<(Self::SendStream, Self::RecvStream), Self::Error> {
+        Self::accept_bi(self).await
+    }
+
+    async fn open_bi(&self) -> Result<(Self::SendStream, Self::RecvStream), Self::Error> {
+        Self::open_bi(self).await
+    }
+
+    async fn open_uni(&self) -> Result<Self::SendStream, Self::Error> {
+        Self::open_uni(self).await
+    }
+
+    fn close(&self, code: u32, reason: &str) {
+        Self::close(self, code, reason);
+    }
+
+    async fn closed(&self) -> Self::Error {
+        Self::closed(self).await
+    }
+
+    fn send_datagram(&self, _data: Bytes) -> Result<(), Self::Error> {
+        unimplemented!()
+    }
+
+    async fn recv_datagram(&self) -> Result<Bytes, Self::Error> {
+        unimplemented!()
+    }
+
+    fn max_datagram_size(&self) -> usize {
+        unimplemented!()
+    }
+}

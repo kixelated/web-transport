@@ -16,6 +16,8 @@ pub enum Error {
     Unknown(JsValue),
 }
 
+impl web_transport_trait::Error for Error {}
+
 impl Error {
     /// The error code used when closing the stream or session.
     pub fn code(&self) -> Option<u8> {
