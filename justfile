@@ -21,8 +21,8 @@ setup-tools:
 
 # Run the CI checks
 check:
-	cargo check --workspace --exclude web-transport-wasm --all-targets --all-features
-	cargo clippy --workspace --exclude web-transport-wasm --all-targets --all-features -- -D warnings
+	cargo check --workspace --all-targets --all-features
+	cargo clippy --workspace --all-targets --all-features -- -D warnings
 
 	# Do the same but explicitly use the WASM target.
 	cargo check --target wasm32-unknown-unknown -p web-transport --all-targets --all-features
@@ -34,7 +34,7 @@ check:
 	cargo fmt --all --check
 
 	# requires: cargo install cargo-hack
-	cargo hack check --feature-powerset --workspace --exclude web-transport-wasm --keep-going
+	cargo hack check --feature-powerset --workspace --keep-going
 	cargo hack check --feature-powerset --target wasm32-unknown-unknown -p web-transport --keep-going
 	cargo hack check --feature-powerset --target wasm32-unknown-unknown -p web-transport-wasm --keep-going
 
@@ -46,14 +46,14 @@ check:
 
 # Run any CI tests
 test:
-	cargo test --workspace --exclude web-transport-wasm --all-targets --all-features
+	cargo test --workspace --all-targets --all-features
 	cargo test --target wasm32-unknown-unknown -p web-transport --all-targets --all-features
 	cargo test --target wasm32-unknown-unknown -p web-transport-wasm --all-targets --all-features
 
 # Automatically fix some issues.
 fix:
-	cargo fix --allow-staged --allow-dirty --workspace --exclude web-transport-wasm --all-targets --all-features
-	cargo clippy --fix --allow-staged --allow-dirty --workspace --exclude web-transport-wasm --all-targets --all-features
+	cargo fix --allow-staged --allow-dirty --workspace --all-targets --all-features
+	cargo clippy --fix --allow-staged --allow-dirty --workspace --all-targets --all-features
 
 	# Do the same but explicitly use the WASM target.
 	cargo fix --allow-staged --allow-dirty --target wasm32-unknown-unknown -p web-transport --all-targets --all-features

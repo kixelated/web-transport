@@ -79,33 +79,3 @@ impl Drop for SendStream {
         self.writer.close();
     }
 }
-
-impl web_transport_trait::SendStream for SendStream {
-    type Error = Error;
-
-    fn set_priority(&mut self, order: i32) {
-        Self::set_priority(self, order)
-    }
-
-    fn reset(&mut self, code: u32) {
-        Self::reset(self, &format!("code = {code}"));
-    }
-
-    async fn finish(&mut self) -> Result<(), Self::Error> {
-        Self::finish(self)
-    }
-
-    async fn write(&mut self, buf: &[u8]) -> Result<usize, Self::Error> {
-        Self::write(self, buf).await?;
-        Ok(buf.len())
-    }
-
-    async fn write_buf<B: Buf>(&mut self, buf: &mut B) -> Result<usize, Self::Error> {
-        Self::write_buf(self, buf).await
-    }
-
-    async fn closed(&mut self) -> Result<(), Self::Error> {
-        Self::closed(self).await?;
-        Ok(())
-    }
-}
