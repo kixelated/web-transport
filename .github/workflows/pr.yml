@@ -1,4 +1,6 @@
-name: Rust
+name: CI
+permissions:
+  contents: read
 
 on:
   pull_request:
@@ -14,20 +16,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@v1
+      # Install Nix
+      - uses: cachix/install-nix-action@v27
         with:
-          toolchain: stable
-          targets: wasm32-unknown-unknown
-          components: clippy, rustfmt
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
 
-      # Install Just to run CI scripts
-      - uses: extractions/setup-just@v3
-
-      # Cargo binstall is used to install tools faster than compiling them from source.
-      - uses: cargo-bins/cargo-binstall@main
-      - run: just setup-tools
+      # Set RUSTFLAGS
+      - run: echo "RUSTFLAGS=--cfg=web_sys_unstable_apis" >> $GITHUB_ENV
 
       # Make sure u guys don't write bad code
-      - run: just check
-      - run: just test
+      - run: nix develop --command just check
