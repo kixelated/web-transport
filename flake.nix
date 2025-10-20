@@ -25,6 +25,7 @@
           pkgs.cargo-shear
           pkgs.cargo-sort
           pkgs.cargo-edit
+          pkgs.cargo-hack
           pkgs.just
           pkgs.pkg-config
           pkgs.glib
