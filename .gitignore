@@ -1,9 +1,3 @@
 target
 Cargo.lock
-
-# Node.js
-node_modules/
-dist/
-
-# Direnv
 .direnv/

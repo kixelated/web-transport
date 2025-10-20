@@ -21,9 +21,6 @@ jobs:
         with:
           github_access_token: ${{ secrets.GITHUB_TOKEN }}
 
-      # Use our flake to get all development tools (Rust, pnpm, just, cargo tools, etc.)
-      - run: nix develop --command echo "Development environment ready"
-
       # Set RUSTFLAGS
       - run: echo "RUSTFLAGS=--cfg=web_sys_unstable_apis" >> $GITHUB_ENV
 
