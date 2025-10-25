@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.3](https://github.com/kixelated/web-transport/compare/web-transport-ws-v0.1.2...web-transport-ws-v0.1.3) - 2025-10-25
+
+### Other
+
+- Don't use a newer Rust method. ([#115](https://github.com/kixelated/web-transport/pull/115))
+
 ## [0.1.2](https://github.com/kixelated/web-transport/compare/web-transport-ws-v0.1.1...web-transport-ws-v0.1.2) - 2025-10-17
 
 ### Other
