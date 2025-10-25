@@ -152,7 +152,7 @@ where
                     return Err(Error::InvalidStreamId);
                 }
 
-                let mut state = match self.recv_streams.entry(stream.id) {
+                match self.recv_streams.entry(stream.id) {
                     hash_map::Entry::Vacant(e) => {
                         if self.is_server == stream.id.server_initiated() {
                             // Already closed, ignore it. TODO slightly wrong
@@ -208,16 +208,21 @@ where
                             }
                         };
 
-                        e.insert_entry(recv_backend)
-                    }
-                    hash_map::Entry::Occupied(e) => e,
-                };
+                        let fin = stream.fin;
+                        recv_backend.inbound_data.send(stream).ok();
 
-                let fin = stream.fin;
-                state.get_mut().inbound_data.send(stream).ok();
-                if fin {
-                    state.remove();
-                }
+                        if !fin {
+                            e.insert(recv_backend);
+                        }
+                    }
+                    hash_map::Entry::Occupied(mut e) => {
+                        let fin = stream.fin;
+                        e.get_mut().inbound_data.send(stream).ok();
+                        if fin {
+                            e.remove();
+                        }
+                    }
+                };
             }
             Frame::ResetStream(reset) => {
                 if !reset.id.can_recv(self.is_server) {
