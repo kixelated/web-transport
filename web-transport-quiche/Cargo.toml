@@ -1,0 +1,41 @@
+[package]
+name = "web-transport-quiche"
+description = "WebTransport library for Quiche"
+authors = ["Luke Curley"]
+repository = "https://github.com/kixelated/web-transport"
+license = "MIT OR Apache-2.0"
+
+version = "0.1.0"
+edition = "2021"
+
+keywords = ["quic", "http3", "webtransport"]
+categories = ["network-programming", "web-programming"]
+
+[package.metadata.docs.rs]
+all-features = true
+
+[dependencies]
+bytes = "1"
+futures = "0.3"
+http = "1"
+log = "0.4"
+
+tokio-quiche = "0.10"
+
+thiserror = "2"
+
+tokio = { version = "1", default-features = false, features = [
+    "io-util",
+    "macros",
+    "sync",
+    "time",
+] }
+url = "2"
+web-transport-proto = { workspace = true }
+web-transport-trait = { workspace = true }
+
+[dev-dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+env_logger = "0.11"
+tokio = { version = "1", features = ["full"] }
