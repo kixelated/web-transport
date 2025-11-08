@@ -16,7 +16,7 @@ use std::{
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use tokio::{
     io::{AsyncRead, AsyncWrite, ReadBuf},
-    sync::{mpsc, watch, Notify},
+    sync::{futures::OwnedNotified, mpsc, watch, Notify},
     task::JoinSet,
 };
 #[cfg(not(target_os = "linux"))]
@@ -83,8 +83,11 @@ impl<M: Metrics> ServerBuilder<M> {
         }))
     }
 
-    pub async fn with_addr<A: tokio::net::ToSocketAddrs>(self, addrs: A) -> io::Result<Self> {
-        let socket = tokio::net::UdpSocket::bind(addrs).await?;
+    pub fn with_addr<A: std::net::ToSocketAddrs>(self, addrs: A) -> io::Result<Self> {
+        // We use std to avoid async
+        let socket = std::net::UdpSocket::bind(addrs)?;
+        socket.set_nonblocking(true)?;
+        let socket = tokio::net::UdpSocket::from_std(socket)?;
         Ok(self.with_sockets([socket]))
     }
 
@@ -567,6 +570,11 @@ impl SendState {
     }
 }
 
+enum SendResult {
+    Success(usize),
+    Blocked(OwnedNotified),
+}
+
 pub struct SendStream {
     id: StreamId,
     state: Arc<Mutex<SendState>>,
@@ -586,42 +594,49 @@ impl SendStream {
         }
 
         loop {
-            let mut state = self.state.lock().unwrap();
-            if let Some(stop) = state.stop {
-                return Err(SendError::Stop(stop));
+            match self.try_write(buf)? {
+                SendResult::Success(n) => return Ok(n),
+                SendResult::Blocked(notified) => notified.await,
             }
-
-            if state.capacity == 0 {
-                let notified = state.writable.clone().notified_owned();
-                drop(state);
-                notified.await;
-                continue;
-            }
-
-            let n = buf.len().min(state.capacity);
-
-            if let Some(back) = state.queued.pop_back() {
-                // Try appending to the existing buffer instead of allocating.
-                match back.try_into_mut() {
-                    Ok(mut back) if back.remaining_mut() >= n => {
-                        back.copy_from_slice(&buf[..n]);
-                        state.capacity -= n;
-                        return Ok(n);
-                    }
-                    Ok(back) => state.queued.push_back(back.freeze()),
-                    Err(back) => state.queued.push_back(back),
-                }
-            } else {
-                // Tell the driver that there's at least one byte ready to send.
-                // NOTE: We only do this when state.queued.is_empty() as an optimization.
-                self.wakeup.lock().unwrap().send(self.id);
-            }
-
-            state.queued.push_back(Bytes::copy_from_slice(&buf[..n]));
-            state.capacity -= n;
-
-            return Ok(n);
         }
+    }
+
+    // Try to write the given buffer to the stream.
+    // Returns the number of bytes written and a notification to wake up the driver when the stream is writable again.
+    fn try_write(&mut self, buf: &[u8]) -> Result<SendResult, SendError> {
+        let mut state = self.state.lock().unwrap();
+        if let Some(stop) = state.stop {
+            return Err(SendError::Stop(stop));
+        }
+
+        if state.capacity == 0 {
+            let notified = state.writable.clone().notified_owned();
+            return Ok(SendResult::Blocked(notified));
+        }
+
+        let n = buf.len().min(state.capacity);
+
+        if let Some(back) = state.queued.pop_back() {
+            // Try appending to the existing buffer instead of allocating.
+            match back.try_into_mut() {
+                Ok(mut back) if back.remaining_mut() >= n => {
+                    back.copy_from_slice(&buf[..n]);
+                    state.capacity -= n;
+                    return Ok(SendResult::Success(n));
+                }
+                Ok(back) => state.queued.push_back(back.freeze()),
+                Err(back) => state.queued.push_back(back),
+            }
+        } else {
+            // Tell the driver that there's at least one byte ready to send.
+            // NOTE: We only do this when state.queued.is_empty() as an optimization.
+            self.wakeup.lock().unwrap().send(self.id);
+        }
+
+        state.queued.push_back(Bytes::copy_from_slice(&buf[..n]));
+        state.capacity -= n;
+
+        return Ok(SendResult::Success(n));
     }
 
     pub async fn write_chunk(&mut self, mut buf: Bytes) -> Result<(), SendError> {
@@ -820,6 +835,12 @@ impl RecvState {
     }
 }
 
+enum RecvResult {
+    Success(Bytes),
+    Blocked(OwnedNotified),
+    Closed,
+}
+
 pub struct RecvStream {
     id: StreamId,
     state: Arc<Mutex<RecvState>>,
@@ -840,34 +861,40 @@ impl RecvStream {
 
     pub async fn read_chunk(&mut self, max: usize) -> Result<Option<Bytes>, RecvError> {
         loop {
-            let mut state = self.state.lock().unwrap();
-
-            if let Some(reset) = state.reset {
-                return Err(RecvError::Reset(reset));
+            match self.try_read(max)? {
+                RecvResult::Success(chunk) => return Ok(Some(chunk)),
+                RecvResult::Blocked(notify) => notify.await,
+                RecvResult::Closed => return Ok(None),
             }
-
-            if let Some(mut chunk) = state.queued.pop_front() {
-                if chunk.len() > max {
-                    let remain = chunk.split_off(max);
-                    state.queued.push_front(remain);
-                }
-                return Ok(Some(chunk));
-            }
-
-            if state.fin {
-                return Ok(None);
-            }
-
-            state.capacity = max;
-
-            let notify = state.readable.clone().notified_owned();
-            drop(state);
-
-            // Tell the driver that we are blocked.
-            self.wakeup.lock().unwrap().recv(self.id);
-
-            notify.await;
         }
+    }
+
+    fn try_read(&mut self, max: usize) -> Result<RecvResult, RecvError> {
+        let mut state = self.state.lock().unwrap();
+
+        if let Some(reset) = state.reset {
+            return Err(RecvError::Reset(reset));
+        }
+
+        if let Some(mut chunk) = state.queued.pop_front() {
+            if chunk.len() > max {
+                let remain = chunk.split_off(max);
+                state.queued.push_front(remain);
+            }
+            return Ok(RecvResult::Success(chunk));
+        }
+
+        if state.fin {
+            return Ok(RecvResult::Closed);
+        }
+
+        state.capacity = max;
+
+        // Tell the driver that we are blocked.
+        self.wakeup.lock().unwrap().recv(self.id);
+
+        let notify = state.readable.clone().notified_owned();
+        Ok(RecvResult::Blocked(notify))
     }
 
     pub async fn read_buf<B: BufMut>(&mut self, buf: &mut B) -> Result<(), RecvError> {
@@ -883,10 +910,11 @@ impl RecvStream {
         }
     }
 
-    pub async fn read_all(&mut self) -> Result<Bytes, RecvError> {
-        let mut buf = BytesMut::new();
-        self.read_buf(&mut buf).await?;
-        Ok(buf.freeze())
+    pub async fn read_all(&mut self, max: usize) -> Result<Bytes, RecvError> {
+        let buf = BytesMut::new();
+        let mut limit = buf.limit(max);
+        self.read_buf(&mut limit).await?;
+        Ok(limit.into_inner().freeze())
     }
 
     pub fn stop(self, code: u64) {

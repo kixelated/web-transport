@@ -70,11 +70,11 @@ impl RecvStream {
             .map_err(Into::into)
     }
 
-    pub async fn read_all(&mut self) -> Result<Bytes, RecvError> {
+    pub async fn read_all(&mut self, max: usize) -> Result<Bytes, RecvError> {
         self.inner
             .as_mut()
             .unwrap()
-            .read_all()
+            .read_all(max)
             .await
             .map_err(Into::into)
     }
