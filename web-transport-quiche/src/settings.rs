@@ -2,6 +2,8 @@ use futures::try_join;
 
 use thiserror::Error;
 
+use crate::ez;
+
 #[derive(Error, Debug, Clone)]
 pub enum SettingsError {
     #[error("quic stream was closed early")]
@@ -14,27 +16,27 @@ pub enum SettingsError {
     WebTransportUnsupported,
 
     #[error("connection error")]
-    ConnectionError(#[from] quinn::ConnectionError),
+    Connection(#[from] ez::ConnectionError),
 
     #[error("read error")]
-    ReadError(#[from] quinn::ReadError),
+    Read(#[from] ez::RecvError),
 
     #[error("write error")]
-    WriteError(#[from] quinn::WriteError),
+    Write(#[from] ez::SendError),
 }
 
 pub struct Settings {
     // A reference to the send/recv stream, so we don't close it until dropped.
     #[allow(dead_code)]
-    send: quinn::SendStream,
+    send: ez::SendStream,
 
     #[allow(dead_code)]
-    recv: quinn::RecvStream,
+    recv: ez::RecvStream,
 }
 
 impl Settings {
     // Establish the H3 connection.
-    pub async fn connect(conn: &quinn::Connection) -> Result<Self, SettingsError> {
+    pub async fn connect(conn: &ez::Connection) -> Result<Self, SettingsError> {
         let recv = Self::accept(conn);
         let send = Self::open(conn);
 
@@ -43,7 +45,7 @@ impl Settings {
         Ok(Self { send, recv })
     }
 
-    async fn accept(conn: &quinn::Connection) -> Result<quinn::RecvStream, SettingsError> {
+    async fn accept(conn: &ez::Connection) -> Result<ez::RecvStream, SettingsError> {
         let mut recv = conn.accept_uni().await?;
         let settings = web_transport_proto::Settings::read(&mut recv).await?;
 
@@ -56,7 +58,7 @@ impl Settings {
         Ok(recv)
     }
 
-    async fn open(conn: &quinn::Connection) -> Result<quinn::SendStream, SettingsError> {
+    async fn open(conn: &ez::Connection) -> Result<ez::SendStream, SettingsError> {
         let mut settings = web_transport_proto::Settings::default();
         settings.enable_webtransport(1);
 

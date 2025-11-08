@@ -1,213 +1,456 @@
-use std::sync::{Arc, Mutex};
+use crate::{ez, RecvStream, SendStream};
 
-use tokio::sync::mpsc;
+use super::{Connect, Settings};
+use futures::{ready, stream::FuturesUnordered, Stream, StreamExt};
+use web_transport_proto::{Frame, StreamUni, VarInt};
+
+use std::{
+    future::{poll_fn, Future},
+    pin::Pin,
+    sync::{Arc, Mutex},
+    task::{Context, Poll},
+};
+
 use url::Url;
 
-use crate::{ConnectionState, RecvStream, SendStream, SessionError};
+/// An errors returned by [`crate::Session`], split based on if they are underlying QUIC errors or WebTransport errors.
+#[derive(Clone, thiserror::Error, Debug)]
+pub enum SessionError {
+    #[error("connection error: {0}")]
+    Connection(#[from] ez::ConnectionError),
 
-/// An established WebTransport session over Quiche.
-///
-/// Similar to Quinn's Connection, but with WebTransport semantics:
-/// 1. Streams have headers with session ID
-/// 2. Datagrams are prefixed with session ID
-/// 3. Error codes are mapped to WebTransport error space
+    #[error("closed: code={0} reason={1}")]
+    Closed(u32, String),
+
+    #[error("unknown session")]
+    Unknown,
+
+    #[error("invalid stream header")]
+    Header,
+}
+
+/// An established WebTransport session.
 #[derive(Clone)]
 pub struct Session {
-    /// Shared connection state with wakers.
-    state: Arc<Mutex<ConnectionState>>,
+    conn: ez::Connection,
 
-    /// Sender for bidirectional stream channel (for cloning).
-    bi_tx: mpsc::UnboundedSender<(SendStream, RecvStream)>,
+    // The session ID, as determined by the stream ID of the connect request.
+    session_id: Option<VarInt>,
 
-    /// Receiver for bidirectional streams (wrapped to allow cloning).
-    bi_rx: Arc<Mutex<Option<mpsc::UnboundedReceiver<(SendStream, RecvStream)>>>>,
+    // The accept logic is stateful, so use an Arc<Mutex> to share it.
+    accept: Option<Arc<Mutex<SessionAccept>>>,
 
-    /// Sender for unidirectional stream channel (for cloning).
-    uni_tx: mpsc::UnboundedSender<RecvStream>,
+    // Cache the headers in front of each stream we open.
+    header_uni: Vec<u8>,
+    header_bi: Vec<u8>,
+    header_datagram: Vec<u8>,
 
-    /// Receiver for unidirectional streams (wrapped to allow cloning).
-    uni_rx: Arc<Mutex<Option<mpsc::UnboundedReceiver<RecvStream>>>>,
+    // Keep a reference to the settings and connect stream to avoid closing them until dropped.
+    #[allow(dead_code)]
+    settings: Option<Arc<Settings>>,
 
-    /// The URL used to create the session.
+    // The URL used to create the session.
     url: Url,
 }
 
 impl Session {
-    /// Create a new session (internal use only).
-    pub(crate) fn new(
-        state: Arc<Mutex<ConnectionState>>,
-        bi_rx: mpsc::UnboundedReceiver<(SendStream, RecvStream)>,
-        uni_rx: mpsc::UnboundedReceiver<RecvStream>,
-        url: Url,
-    ) -> Self {
-        let (bi_tx, _) = mpsc::unbounded_channel();
-        let (uni_tx, _) = mpsc::unbounded_channel();
+    pub(crate) fn new(conn: ez::Connection, settings: Settings, connect: Connect) -> Self {
+        // The session ID is the stream ID of the CONNECT request.
+        let session_id = connect.session_id();
 
+        // Cache the tiny header we write in front of each stream we open.
+        let mut header_uni = Vec::new();
+        StreamUni::WEBTRANSPORT.encode(&mut header_uni);
+        session_id.encode(&mut header_uni);
+
+        let mut header_bi = Vec::new();
+        Frame::WEBTRANSPORT.encode(&mut header_bi);
+        session_id.encode(&mut header_bi);
+
+        let mut header_datagram = Vec::new();
+        session_id.encode(&mut header_datagram);
+
+        // Accept logic is stateful, so use an Arc<Mutex> to share it.
+        let accept = SessionAccept::new(conn.clone(), session_id);
+
+        let this = Self {
+            conn,
+            accept: Some(Arc::new(Mutex::new(accept))),
+            session_id: Some(session_id),
+            header_uni,
+            header_bi,
+            header_datagram,
+            url: connect.url().clone(),
+            settings: Some(Arc::new(settings)),
+        };
+
+        // Run a background task to check if the connect stream is closed.
+        tokio::spawn(this.clone().run_closed(connect));
+
+        this
+    }
+
+    // Keep reading from the control stream until it's closed.
+    async fn run_closed(self, connect: Connect) {
+        let (_send, mut recv) = connect.into_inner();
+
+        loop {
+            match web_transport_proto::Capsule::read(&mut recv).await {
+                Ok(web_transport_proto::Capsule::CloseWebTransportSession { code, reason }) => {
+                    self.close(code, &reason);
+                    return;
+                }
+                Ok(web_transport_proto::Capsule::Unknown { typ, payload }) => {
+                    log::warn!("unknown capsule: type={typ} size={}", payload.len());
+                }
+                Err(err) => {
+                    log::warn!("control stream capsule error: {err:?}");
+                    self.close(500, "capsule error");
+                    return;
+                }
+            }
+        }
+    }
+
+    /*
+    /// Connect using an established QUIC connection if you want to create the connection yourself.
+    /// This will only work with a brand new QUIC connection using the HTTP/3 ALPN.
+    pub async fn connect(conn: ez::Connection, url: Url) -> Result<Session, ClientError> {
+        // Perform the H3 handshake by sending/reciving SETTINGS frames.
+        let settings = Settings::connect(&conn).await?;
+
+        // Send the HTTP/3 CONNECT request.
+        let connect = Connect::open(&conn, url).await?;
+
+        // Return the resulting session with a reference to the control/connect streams.
+        // If either stream is closed, then the session will be closed, so we need to keep them around.
+        let session = Session::new(conn, settings, connect);
+
+        Ok(session)
+    }
+    */
+
+    /// Accept a new unidirectional stream. See [`quinn::Connection::accept_uni`].
+    pub async fn accept_uni(&self) -> Result<RecvStream, SessionError> {
+        if let Some(accept) = &self.accept {
+            poll_fn(|cx| accept.lock().unwrap().poll_accept_uni(cx)).await
+        } else {
+            self.conn
+                .accept_uni()
+                .await
+                .map(RecvStream::new)
+                .map_err(Into::into)
+        }
+    }
+
+    /// Accept a new bidirectional stream. See [`quinn::Connection::accept_bi`].
+    pub async fn accept_bi(&self) -> Result<(SendStream, RecvStream), SessionError> {
+        if let Some(accept) = &self.accept {
+            poll_fn(|cx| accept.lock().unwrap().poll_accept_bi(cx)).await
+        } else {
+            self.conn
+                .accept_bi()
+                .await
+                .map(|(send, recv)| (SendStream::new(send), RecvStream::new(recv)))
+                .map_err(Into::into)
+        }
+    }
+
+    /// Open a new unidirectional stream. See [`quinn::Connection::open_uni`].
+    pub async fn open_uni(&self) -> Result<SendStream, SessionError> {
+        let mut send = self.conn.open_uni().await?;
+
+        send.write_all(&self.header_uni)
+            .await
+            .map_err(|_| SessionError::Header)?;
+
+        Ok(SendStream::new(send))
+    }
+
+    /// Open a new bidirectional stream. See [`quinn::Connection::open_bi`].
+    pub async fn open_bi(&self) -> Result<(SendStream, RecvStream), SessionError> {
+        let (mut send, recv) = self.conn.open_bi().await?;
+
+        send.write_all(&self.header_bi)
+            .await
+            .map_err(|_| SessionError::Header)?;
+
+        Ok((SendStream::new(send), RecvStream::new(recv)))
+    }
+
+    /*
+    /// Asynchronously receives an application datagram from the remote peer.
+    ///
+    /// This method is used to receive an application datagram sent by the remote
+    /// peer over the connection.
+    /// It waits for a datagram to become available and returns the received bytes.
+    pub async fn read_datagram(&self) -> Result<Bytes, SessionError> {
+        let mut datagram = self
+            .conn
+            .read_datagram()
+            .await
+            .map_err(SessionError::from)?;
+
+        let mut cursor = Cursor::new(&datagram);
+
+        if let Some(session_id) = self.session_id {
+            // We have to check and strip the session ID from the datagram.
+            let actual_id = VarInt::decode(&mut cursor).map_err(|_| SessionError::Unknown)?;
+            if actual_id != session_id {
+                return Err(SessionError::Unknown.into());
+            }
+        }
+
+        // Return the datagram without the session ID.
+        let datagram = datagram.split_off(cursor.position() as usize);
+
+        Ok(datagram)
+    }
+
+    /// Sends an application datagram to the remote peer.
+    ///
+    /// Datagrams are unreliable and may be dropped or delivered out of order.
+    /// The data must be smaller than [`max_datagram_size`](Self::max_datagram_size).
+    pub fn send_datagram(&self, data: Bytes) -> Result<(), SessionError> {
+        if !self.header_datagram.is_empty() {
+            // Unfortunately, we need to allocate/copy each datagram because of the Quinn API.
+            // Pls go +1 if you care: https://github.com/quinn-rs/quinn/issues/1724
+            let mut buf = BytesMut::with_capacity(self.header_datagram.len() + data.len());
+
+            // Prepend the datagram with the header indicating the session ID.
+            buf.extend_from_slice(&self.header_datagram);
+            buf.extend_from_slice(&data);
+
+            self.conn.send_datagram(buf.into())?;
+        } else {
+            self.conn.send_datagram(data)?;
+        }
+
+        Ok(())
+    }
+
+    /// Computes the maximum size of datagrams that may be passed to
+    /// [`send_datagram`](Self::send_datagram).
+    pub fn max_datagram_size(&self) -> usize {
+        let mtu = self
+            .conn
+            .max_datagram_size()
+            .expect("datagram support is required");
+        mtu.saturating_sub(self.header_datagram.len())
+    }
+    */
+
+    /// Immediately close the connection with an error code and reason.
+    pub fn close(self, code: u32, reason: &str) {
+        let code = if self.session_id.is_some() {
+            web_transport_proto::error_to_http3(code)
+        } else {
+            code.into()
+        };
+
+        self.conn.close(code, reason)
+    }
+
+    /// Wait until the session is closed, returning the error.
+    pub async fn closed(&self) -> SessionError {
+        self.conn.closed().await.into()
+    }
+
+    /// Create a new session from a raw QUIC connection and a URL.
+    ///
+    /// This is used to pretend like a QUIC connection is a WebTransport session.
+    /// It's a hack, but it makes it much easier to support WebTransport and raw QUIC simultaneously.
+    pub fn raw(conn: ez::Connection, url: Url) -> Self {
         Self {
-            state,
-            bi_tx,
-            bi_rx: Arc::new(Mutex::new(Some(bi_rx))),
-            uni_tx,
-            uni_rx: Arc::new(Mutex::new(Some(uni_rx))),
+            conn,
+            session_id: None,
+            header_uni: Default::default(),
+            header_bi: Default::default(),
+            header_datagram: Default::default(),
+            accept: None,
+            settings: None,
             url,
         }
     }
 
-    /// Get the URL used to create this session.
     pub fn url(&self) -> &Url {
         &self.url
     }
-
-    /// Accept a new unidirectional stream.
-    pub async fn accept_uni(&self) -> Result<RecvStream, SessionError> {
-        // Take the receiver out of the Option temporarily
-        let mut rx = {
-            let mut guard = self.uni_rx.lock().unwrap();
-            guard.take().ok_or(SessionError::Closed)?
-        };
-
-        // Await without holding the lock
-        let result = rx.recv().await;
-
-        // Put the receiver back
-        *self.uni_rx.lock().unwrap() = Some(rx);
-
-        result.ok_or(SessionError::Closed)
-    }
-
-    /// Accept a new bidirectional stream.
-    pub async fn accept_bi(&self) -> Result<(SendStream, RecvStream), SessionError> {
-        // Take the receiver out of the Option temporarily
-        let mut rx = {
-            let mut guard = self.bi_rx.lock().unwrap();
-            guard.take().ok_or(SessionError::Closed)?
-        };
-
-        // Await without holding the lock
-        let result = rx.recv().await;
-
-        // Put the receiver back
-        *self.bi_rx.lock().unwrap() = Some(rx);
-
-        result.ok_or(SessionError::Closed)
-    }
-
-    /// Open a new unidirectional stream.
-    pub async fn open_uni(&self) -> Result<SendStream, SessionError> {
-        // TODO: Properly open a stream via Quiche
-        // For now, we'll use a placeholder stream ID
-        // This needs to be integrated with the driver to actually open streams
-        let state = self.state.clone();
-        let stream_id = 0u64; // Placeholder
-
-        // The stream header will be prepended automatically on first write by SendStream
-        Ok(SendStream::new(state, stream_id, false))
-    }
-
-    /// Open a new bidirectional stream.
-    pub async fn open_bi(&self) -> Result<(SendStream, RecvStream), SessionError> {
-        // TODO: Properly open a stream via Quiche
-        // For now, we'll use a placeholder stream ID
-        // This needs to be integrated with the driver to actually open streams
-        let state = self.state.clone();
-        let stream_id = 0u64; // Placeholder
-
-        // The stream header will be prepended automatically on first write by SendStream
-        let send = SendStream::new(state.clone(), stream_id, true);
-        let recv = RecvStream::new(state, stream_id);
-
-        Ok((send, recv))
-    }
-
-    /// Receive an application datagram.
-    ///
-    /// Waits for a datagram to become available and returns the received bytes.
-    /// The session ID header is automatically stripped.
-    pub async fn read_datagram(&self) -> Result<Vec<u8>, SessionError> {
-        // TODO: Implement datagram reception
-        // Need to integrate with the driver to receive datagrams
-        Err(SessionError::Closed)
-    }
-
-    /// Send an application datagram.
-    ///
-    /// Datagrams are unreliable and may be dropped or delivered out of order.
-    pub fn send_datagram(&self, data: &[u8]) -> Result<(), SessionError> {
-        let mut state = self.state.lock().unwrap();
-
-        // Prepend the session ID header
-        let mut buf = Vec::with_capacity(state.header_datagram.len() + data.len());
-        buf.extend_from_slice(&state.header_datagram);
-        buf.extend_from_slice(data);
-
-        state
-            .conn
-            .dgram_send(&buf)
-            .map_err(|e| SessionError::Quiche(e.into()))?;
-
-        Ok(())
-    }
-
-    /// Close the session with an error code and reason.
-    pub fn close(&self, error_code: u32, reason: &[u8]) {
-        let mut state = self.state.lock().unwrap();
-        let code = web_transport_proto::error_to_http3(error_code);
-        let _ = state.conn.close(false, code, reason);
-    }
-
-    /// Get the maximum datagram size that can be sent.
-    pub fn max_datagram_size(&self) -> usize {
-        let state = self.state.lock().unwrap();
-        state
-            .conn
-            .dgram_max_writable_len()
-            .unwrap_or(0)
-            .saturating_sub(state.header_datagram.len())
-    }
 }
 
-impl web_transport_trait::Session for Session {
-    type Error = SessionError;
-    type SendStream = SendStream;
-    type RecvStream = RecvStream;
+// Type aliases just so clippy doesn't complain about the complexity.
+type AcceptUni = dyn Stream<Item = Result<ez::RecvStream, ez::ConnectionError>> + Send;
+type AcceptBi =
+    dyn Stream<Item = Result<(ez::SendStream, ez::RecvStream), ez::ConnectionError>> + Send;
+type PendingUni = dyn Future<Output = Result<(StreamUni, ez::RecvStream), SessionError>> + Send;
+type PendingBi =
+    dyn Future<Output = Result<Option<(ez::SendStream, ez::RecvStream)>, SessionError>> + Send;
 
-    async fn accept_bi(&self) -> Result<(Self::SendStream, Self::RecvStream), Self::Error> {
-        Session::accept_bi(self).await
+// Logic just for accepting streams, which is annoying because of the stream header.
+pub struct SessionAccept {
+    session_id: VarInt,
+
+    // We also need to keep a reference to the qpack streams if the endpoint (incorrectly) creates them.
+    // Again, this is just so they don't get closed until we drop the session.
+    qpack_encoder: Option<ez::RecvStream>,
+    qpack_decoder: Option<ez::RecvStream>,
+
+    accept_uni: Pin<Box<AcceptUni>>,
+    accept_bi: Pin<Box<AcceptBi>>,
+
+    // Keep track of work being done to read/write the WebTransport stream header.
+    pending_uni: FuturesUnordered<Pin<Box<PendingUni>>>,
+    pending_bi: FuturesUnordered<Pin<Box<PendingBi>>>,
+}
+
+impl SessionAccept {
+    pub(crate) fn new(conn: ez::Connection, session_id: VarInt) -> Self {
+        // Create a stream that just outputs new streams, so it's easy to call from poll.
+        let accept_uni = Box::pin(futures::stream::unfold(conn.clone(), |conn| async {
+            Some((conn.accept_uni().await, conn))
+        }));
+
+        let accept_bi = Box::pin(futures::stream::unfold(conn, |conn| async {
+            Some((conn.accept_bi().await, conn))
+        }));
+
+        Self {
+            session_id,
+
+            qpack_decoder: None,
+            qpack_encoder: None,
+
+            accept_uni,
+            accept_bi,
+
+            pending_uni: FuturesUnordered::new(),
+            pending_bi: FuturesUnordered::new(),
+        }
     }
 
-    async fn accept_uni(&self) -> Result<Self::RecvStream, Self::Error> {
-        Session::accept_uni(self).await
+    // This is poll-based because we accept and decode streams in parallel.
+    // In async land I would use tokio::JoinSet, but that requires a runtime.
+    // It's better to use FuturesUnordered instead because it's agnostic.
+    pub fn poll_accept_uni(
+        &mut self,
+        cx: &mut Context<'_>,
+    ) -> Poll<Result<RecvStream, SessionError>> {
+        loop {
+            // Accept any new streams.
+            if let Poll::Ready(Some(res)) = self.accept_uni.poll_next_unpin(cx) {
+                // Start decoding the header and add the future to the list of pending streams.
+                let recv = res?;
+                let pending = Self::decode_uni(recv, self.session_id);
+                self.pending_uni.push(Box::pin(pending));
+
+                continue;
+            }
+
+            // Poll the list of pending streams.
+            let (typ, recv) = match ready!(self.pending_uni.poll_next_unpin(cx)) {
+                Some(res) => res?,
+                None => return Poll::Pending,
+            };
+
+            // Decide if we keep looping based on the type.
+            match typ {
+                StreamUni::WEBTRANSPORT => {
+                    let recv = RecvStream::new(recv);
+                    return Poll::Ready(Ok(recv));
+                }
+                StreamUni::QPACK_DECODER => {
+                    self.qpack_decoder = Some(recv);
+                }
+                StreamUni::QPACK_ENCODER => {
+                    self.qpack_encoder = Some(recv);
+                }
+                _ => {
+                    // ignore unknown streams
+                    log::debug!("ignoring unknown unidirectional stream: {typ:?}");
+                }
+            }
+        }
     }
 
-    async fn open_bi(&self) -> Result<(Self::SendStream, Self::RecvStream), Self::Error> {
-        Session::open_bi(self).await
+    // Reads the stream header, returning the stream type.
+    async fn decode_uni(
+        mut recv: ez::RecvStream,
+        expected_session: VarInt,
+    ) -> Result<(StreamUni, ez::RecvStream), SessionError> {
+        // Read the VarInt at the start of the stream.
+        let typ = VarInt::read(&mut recv)
+            .await
+            .map_err(|_| SessionError::Unknown)?;
+        let typ = StreamUni(typ);
+
+        if typ == StreamUni::WEBTRANSPORT {
+            // Read the session_id and validate it
+            let session_id = VarInt::read(&mut recv)
+                .await
+                .map_err(|_| SessionError::Unknown)?;
+            if session_id != expected_session {
+                return Err(SessionError::Unknown);
+            }
+        }
+
+        // We need to keep a reference to the qpack streams if the endpoint (incorrectly) creates them, so return everything.
+        Ok((typ, recv))
     }
 
-    async fn open_uni(&self) -> Result<Self::SendStream, Self::Error> {
-        Session::open_uni(self).await
+    pub fn poll_accept_bi(
+        &mut self,
+        cx: &mut Context<'_>,
+    ) -> Poll<Result<(SendStream, RecvStream), SessionError>> {
+        loop {
+            // Accept any new streams.
+            if let Poll::Ready(Some(res)) = self.accept_bi.poll_next_unpin(cx) {
+                // Start decoding the header and add the future to the list of pending streams.
+                let (send, recv) = res?;
+                let pending = Self::decode_bi(send, recv, self.session_id);
+                self.pending_bi.push(Box::pin(pending));
+
+                continue;
+            }
+
+            // Poll the list of pending streams.
+            let res = match ready!(self.pending_bi.poll_next_unpin(cx)) {
+                Some(res) => res?,
+                None => return Poll::Pending,
+            };
+
+            if let Some((send, recv)) = res {
+                // Wrap the streams in our own types for correct error codes.
+                let send = SendStream::new(send);
+                let recv = RecvStream::new(recv);
+                return Poll::Ready(Ok((send, recv)));
+            }
+
+            // Keep looping if it's a stream we want to ignore.
+        }
     }
 
-    fn close(&self, error_code: u32, reason: &str) {
-        Session::close(self, error_code, reason.as_bytes());
-    }
+    // Reads the stream header, returning Some if it's a WebTransport stream.
+    async fn decode_bi(
+        send: ez::SendStream,
+        mut recv: ez::RecvStream,
+        expected_session: VarInt,
+    ) -> Result<Option<(ez::SendStream, ez::RecvStream)>, SessionError> {
+        let typ = VarInt::read(&mut recv)
+            .await
+            .map_err(|_| SessionError::Unknown)?;
+        if Frame(typ) != Frame::WEBTRANSPORT {
+            log::debug!("ignoring unknown bidirectional stream: {typ:?}");
+            return Ok(None);
+        }
 
-    fn send_datagram(&self, data: bytes::Bytes) -> Result<(), Self::Error> {
-        Session::send_datagram(self, &data)
-    }
+        // Read the session ID and validate it.
+        let session_id = VarInt::read(&mut recv)
+            .await
+            .map_err(|_| SessionError::Unknown)?;
+        if session_id != expected_session {
+            return Err(SessionError::Unknown);
+        }
 
-    async fn recv_datagram(&self) -> Result<bytes::Bytes, Self::Error> {
-        let data = Session::read_datagram(self).await?;
-        Ok(bytes::Bytes::from(data))
-    }
-
-    fn max_datagram_size(&self) -> usize {
-        Session::max_datagram_size(self)
-    }
-
-    async fn closed(&self) -> Result<(), Self::Error> {
-        // TODO: Implement closed detection
-        // For now, just wait forever
-        tokio::time::sleep(tokio::time::Duration::from_secs(3600)).await;
-        Ok(())
+        Ok(Some((send, recv)))
     }
 }

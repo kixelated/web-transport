@@ -1,109 +1,112 @@
 use std::{
-    io,
+    future::Future,
     pin::Pin,
-    sync::{Arc, Mutex},
     task::{Context, Poll},
 };
 
+use bytes::{BufMut, Bytes};
+use futures::ready;
 use tokio::io::{AsyncRead, ReadBuf};
-use tokio_quiche::quiche;
 
-use crate::{ConnectionState, ReadError};
+use crate::ez;
 
-/// A receive stream for WebTransport over Quiche.
-/// Implements AsyncRead with waker-based backpressure.
+#[derive(thiserror::Error, Debug)]
+pub enum RecvError {
+    #[error("connection error: {0}")]
+    Connection(#[from] ez::ConnectionError),
+
+    #[error("RESET_STREAM({0})")]
+    Reset(u32),
+
+    #[error("stream closed")]
+    Closed,
+}
+
+impl From<ez::RecvError> for RecvError {
+    fn from(err: ez::RecvError) -> Self {
+        match err {
+            ez::RecvError::Reset(code) => {
+                RecvError::Reset(web_transport_proto::error_from_http3(code).unwrap_or(code as u32))
+            }
+            ez::RecvError::Connection(e) => RecvError::Connection(e),
+            ez::RecvError::Closed => RecvError::Closed,
+        }
+    }
+}
+
 pub struct RecvStream {
-    /// Shared connection state.
-    state: Arc<Mutex<ConnectionState>>,
-
-    /// The QUIC stream ID.
-    stream_id: u64,
+    inner: Option<ez::RecvStream>,
 }
 
 impl RecvStream {
-    pub(crate) fn new(state: Arc<Mutex<ConnectionState>>, stream_id: u64) -> Self {
-        Self { state, stream_id }
+    pub(crate) fn new(inner: ez::RecvStream) -> Self {
+        Self { inner: Some(inner) }
     }
 
-    /// Get the stream ID.
-    pub fn id(&self) -> u64 {
-        self.stream_id
+    pub async fn read(&mut self, buf: &mut [u8]) -> Result<Option<usize>, RecvError> {
+        self.inner
+            .as_mut()
+            .unwrap()
+            .read(buf)
+            .await
+            .map_err(Into::into)
     }
 
-    /// Stop the stream with an error code.
-    pub fn stop(&mut self, error_code: u32) -> Result<(), ReadError> {
-        let code = web_transport_proto::error_to_http3(error_code);
-        let mut state = self.state.lock().unwrap();
+    pub async fn read_chunk(&mut self, max: usize) -> Result<Option<Bytes>, RecvError> {
+        self.inner
+            .as_mut()
+            .unwrap()
+            .read_chunk(max)
+            .await
+            .map_err(Into::into)
+    }
 
-        state
-            .conn
-            .stream_shutdown(self.stream_id, quiche::Shutdown::Read, code)
-            .map_err(|e| match e {
-                quiche::Error::Done => ReadError::ClosedStream,
-                _ => ReadError::SessionError(e.into()),
-            })?;
+    pub async fn read_buf<B: BufMut>(&mut self, buf: &mut B) -> Result<(), RecvError> {
+        self.inner
+            .as_mut()
+            .unwrap()
+            .read_buf(buf)
+            .await
+            .map_err(Into::into)
+    }
 
-        Ok(())
+    pub async fn read_all(&mut self) -> Result<Bytes, RecvError> {
+        self.inner
+            .as_mut()
+            .unwrap()
+            .read_all()
+            .await
+            .map_err(Into::into)
+    }
+
+    pub fn stop(mut self, code: u32) {
+        self.inner
+            .take()
+            .unwrap()
+            .stop(web_transport_proto::error_to_http3(code));
+    }
+}
+
+impl Drop for RecvStream {
+    fn drop(&mut self) {
+        if let Some(inner) = self.inner.take() {
+            inner.stop(web_transport_proto::error_to_http3(0));
+        }
     }
 }
 
 impl AsyncRead for RecvStream {
     fn poll_read(
-        self: Pin<&mut Self>,
+        mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
         buf: &mut ReadBuf<'_>,
-    ) -> Poll<io::Result<()>> {
-        let mut state = self.state.lock().unwrap();
+    ) -> Poll<Result<(), std::io::Error>> {
+        let fut = self.read_buf(buf);
+        tokio::pin!(fut);
 
-        match state
-            .conn
-            .stream_recv(self.stream_id, buf.initialize_unfilled())
-        {
-            Ok((read, _fin)) => {
-                buf.advance(read);
-                Poll::Ready(Ok(()))
-            }
-            Err(quiche::Error::Done) => {
-                // Register waker and return Pending
-                state.recv_wakers.insert(self.stream_id, cx.waker().clone());
-                Poll::Pending
-            }
-            Err(quiche::Error::StreamReset(error_code)) => {
-                let err = match web_transport_proto::error_from_http3(error_code) {
-                    Some(code) => ReadError::Reset(code),
-                    None => ReadError::InvalidReset,
-                };
-                Poll::Ready(Err(io::Error::new(io::ErrorKind::Other, err)))
-            }
-            Err(e) => {
-                let err = ReadError::SessionError(e.into());
-                Poll::Ready(Err(io::Error::new(io::ErrorKind::Other, err)))
-            }
-        }
-    }
-}
-
-impl web_transport_trait::RecvStream for RecvStream {
-    type Error = ReadError;
-
-    async fn read(&mut self, buf: &mut [u8]) -> Result<Option<usize>, Self::Error> {
-        use tokio::io::AsyncReadExt;
-        match AsyncReadExt::read(self, buf).await {
-            Ok(0) => Ok(None), // EOF
-            Ok(n) => Ok(Some(n)),
-            Err(_e) => Err(ReadError::SessionError(crate::SessionError::Quiche(
-                crate::error::QuicheError(Arc::new(quiche::Error::Done)),
-            ))),
-        }
-    }
-
-    fn stop(&mut self, error_code: u32) {
-        let _ = RecvStream::stop(self, error_code);
-    }
-
-    async fn closed(&mut self) -> Result<(), Self::Error> {
-        // TODO: Implement stream close detection
-        // For now, this is a no-op
-        Ok(())
+        Poll::Ready(
+            ready!(fut.poll(cx))
+                .map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, err.to_string())),
+        )
     }
 }

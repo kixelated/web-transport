@@ -58,6 +58,9 @@ pub enum WebTransportError {
     #[error("unknown session")]
     UnknownSession,
 
+    #[error("unknown stream")]
+    UnknownStream,
+
     #[error("read error: {0}")]
     ReadError(#[from] quinn::ReadExactError),
 

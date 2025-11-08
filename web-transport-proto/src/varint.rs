@@ -1,10 +1,11 @@
 // Based on Quinn: https://github.com/quinn-rs/quinn/tree/main/quinn-proto/src
 // Licensed under Apache-2.0 OR MIT
 
-use std::{convert::TryInto, fmt};
+use std::{convert::TryInto, fmt, io::Cursor};
 
 use bytes::{Buf, BufMut};
 use thiserror::Error;
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 /// An integer less than 2^62
 ///
@@ -162,6 +163,31 @@ impl VarInt {
         Ok(Self(x))
     }
 
+    // Read a varint from the stream.
+    pub async fn read<S: AsyncRead + Unpin>(stream: &mut S) -> Result<Self, VarIntUnexpectedEnd> {
+        // 8 bytes is the max size of a varint
+        let mut buf = [0; 8];
+
+        // Read the first byte because it includes the length.
+        stream
+            .read_exact(&mut buf[0..1])
+            .await
+            .map_err(|_| VarIntUnexpectedEnd)?;
+
+        // 0b00 = 1, 0b01 = 2, 0b10 = 4, 0b11 = 8
+        let size = 1 << (buf[0] >> 6);
+        stream
+            .read_exact(&mut buf[1..size])
+            .await
+            .map_err(|_| VarIntUnexpectedEnd)?;
+
+        // Use a cursor to read the varint on the stack.
+        let mut cursor = Cursor::new(&buf[..size]);
+        let v = VarInt::decode(&mut cursor).unwrap();
+
+        Ok(v)
+    }
+
     pub fn encode<B: BufMut>(&self, w: &mut B) {
         let x = self.0;
         if x < 2u64.pow(6) {
@@ -175,6 +201,25 @@ impl VarInt {
         } else {
             unreachable!("malformed VarInt")
         }
+    }
+
+    pub async fn write<S: AsyncWrite + Unpin>(
+        &self,
+        stream: &mut S,
+    ) -> Result<(), VarIntUnexpectedEnd> {
+        // Super jaink but keeps everything on the stack.
+        let mut buf = [0u8; 8];
+        let mut cursor: &mut [u8] = &mut buf;
+        self.encode(&mut cursor);
+        let size = 8 - cursor.len();
+
+        let mut cursor = &buf[..size];
+        stream
+            .write_all_buf(&mut cursor)
+            .await
+            .map_err(|_| VarIntUnexpectedEnd)?;
+
+        Ok(())
     }
 }
 

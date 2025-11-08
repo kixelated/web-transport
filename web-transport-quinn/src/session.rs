@@ -10,7 +10,6 @@ use std::{
 
 use bytes::{Bytes, BytesMut};
 use futures::stream::{FuturesUnordered, Stream, StreamExt};
-use tokio::io::AsyncReadExt;
 use url::Url;
 
 use crate::{
@@ -96,36 +95,19 @@ impl Session {
     async fn run_closed(&mut self, connect: Connect) -> (u32, String) {
         let (_send, mut recv) = connect.into_inner();
 
-        let mut buf = Vec::new();
-
         loop {
-            // Keep reading from the stream until we get a closed capsule.
-            match recv.read_buf(&mut buf).await {
-                Ok(0) => return (0, "".to_string()),
-                Ok(_) => {}
-                // std::io::Error is pretty useless
-                Err(_err) => return (1, "read error".to_string()),
-            };
-
-            let mut cursor = Cursor::new(&buf);
-
-            match web_transport_proto::Capsule::decode(&mut cursor) {
-                Ok(capsule) => match capsule {
-                    web_transport_proto::Capsule::CloseWebTransportSession { code, reason } => {
-                        return (code, reason)
-                    }
-                    web_transport_proto::Capsule::Unknown { typ, payload } => {
-                        log::warn!("unknown capsule: type={typ} size={}", payload.len());
-                    }
-                },
-                Err(web_transport_proto::CapsuleError::UnexpectedEnd) => continue, // More data needed.
+            match web_transport_proto::Capsule::read(&mut recv).await {
+                Ok(web_transport_proto::Capsule::CloseWebTransportSession { code, reason }) => {
+                    return (code, reason);
+                }
+                Ok(web_transport_proto::Capsule::Unknown { typ, payload }) => {
+                    log::warn!("unknown capsule: type={typ} size={}", payload.len());
+                }
                 Err(err) => {
                     log::warn!("control stream capsule error: {err:?}");
                     return (1, "capsule error".to_string());
                 }
-            };
-
-            buf.drain(..cursor.position() as usize);
+            }
         }
     }
 
@@ -207,15 +189,18 @@ impl Session {
     /// peer over the connection.
     /// It waits for a datagram to become available and returns the received bytes.
     pub async fn read_datagram(&self) -> Result<Bytes, SessionError> {
-        let mut datagram = self.conn.read_datagram().await?;
+        let mut datagram = self
+            .conn
+            .read_datagram()
+            .await
+            .map_err(SessionError::from)?;
 
         let mut cursor = Cursor::new(&datagram);
 
         if let Some(session_id) = self.session_id {
             // We have to check and strip the session ID from the datagram.
-            let actual_id = VarInt::decode(&mut cursor).map_err(|_| {
-                WebTransportError::ReadError(quinn::ReadExactError::FinishedEarly(0))
-            })?;
+            let actual_id =
+                VarInt::decode(&mut cursor).map_err(|_| WebTransportError::UnknownSession)?;
             if actual_id != session_id {
                 return Err(WebTransportError::UnknownSession.into());
             }
@@ -434,12 +419,16 @@ impl SessionAccept {
         expected_session: VarInt,
     ) -> Result<(StreamUni, quinn::RecvStream), SessionError> {
         // Read the VarInt at the start of the stream.
-        let typ = Self::read_varint(&mut recv).await?;
+        let typ = VarInt::read(&mut recv)
+            .await
+            .map_err(|_| WebTransportError::UnknownStream)?;
         let typ = StreamUni(typ);
 
         if typ == StreamUni::WEBTRANSPORT {
             // Read the session_id and validate it
-            let session_id = Self::read_varint(&mut recv).await?;
+            let session_id = VarInt::read(&mut recv)
+                .await
+                .map_err(|_| WebTransportError::UnknownSession)?;
             if session_id != expected_session {
                 return Err(WebTransportError::UnknownSession.into());
             }
@@ -487,49 +476,23 @@ impl SessionAccept {
         mut recv: quinn::RecvStream,
         expected_session: VarInt,
     ) -> Result<Option<(quinn::SendStream, quinn::RecvStream)>, SessionError> {
-        let typ = Self::read_varint(&mut recv).await?;
+        let typ = VarInt::read(&mut recv)
+            .await
+            .map_err(|_| WebTransportError::UnknownStream)?;
         if Frame(typ) != Frame::WEBTRANSPORT {
             log::debug!("ignoring unknown bidirectional stream: {typ:?}");
             return Ok(None);
         }
 
         // Read the session ID and validate it.
-        let session_id = Self::read_varint(&mut recv).await?;
+        let session_id = VarInt::read(&mut recv)
+            .await
+            .map_err(|_| WebTransportError::UnknownSession)?;
         if session_id != expected_session {
             return Err(WebTransportError::UnknownSession.into());
         }
 
         Ok(Some((send, recv)))
-    }
-
-    // Read into the provided buffer and cast any errors to SessionError.
-    async fn read_full(recv: &mut quinn::RecvStream, buf: &mut [u8]) -> Result<(), SessionError> {
-        match recv.read_exact(buf).await {
-            Ok(()) => Ok(()),
-            Err(quinn::ReadExactError::ReadError(quinn::ReadError::ConnectionLost(err))) => {
-                Err(err.into())
-            }
-            Err(err) => Err(WebTransportError::ReadError(err).into()),
-        }
-    }
-
-    // Read a varint from the stream.
-    async fn read_varint(recv: &mut quinn::RecvStream) -> Result<VarInt, SessionError> {
-        // 8 bytes is the max size of a varint
-        let mut buf = [0; 8];
-
-        // Read the first byte because it includes the length.
-        Self::read_full(recv, &mut buf[0..1]).await?;
-
-        // 0b00 = 1, 0b01 = 2, 0b10 = 4, 0b11 = 8
-        let size = 1 << (buf[0] >> 6);
-        Self::read_full(recv, &mut buf[1..size]).await?;
-
-        // Use a cursor to read the varint on the stack.
-        let mut cursor = Cursor::new(&buf[..size]);
-        let v = VarInt::decode(&mut cursor).unwrap();
-
-        Ok(v)
     }
 }
 

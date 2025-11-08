@@ -1,4 +1,5 @@
-use bytes::{Buf, BufMut, Bytes};
+use bytes::{Buf, BufMut, Bytes, BytesMut};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 use crate::{VarInt, VarIntUnexpectedEnd};
 
@@ -68,6 +69,22 @@ impl Capsule {
         }
     }
 
+    pub async fn read<S: AsyncRead + Unpin>(stream: &mut S) -> Result<Self, CapsuleError> {
+        let mut buf = Vec::new();
+        loop {
+            stream
+                .read_buf(&mut buf)
+                .await
+                .map_err(|_| CapsuleError::UnexpectedEnd)?;
+            let mut limit = std::io::Cursor::new(&buf);
+            match Self::decode(&mut limit) {
+                Ok(capsule) => return Ok(capsule),
+                Err(CapsuleError::UnexpectedEnd) => continue,
+                Err(e) => return Err(e.into()),
+            }
+        }
+    }
+
     pub fn encode<B: BufMut>(&self, buf: &mut B) {
         match self {
             Self::CloseWebTransportSession {
@@ -100,6 +117,16 @@ impl Capsule {
                 buf.put_slice(payload);
             }
         }
+    }
+
+    pub async fn write<S: AsyncWrite + Unpin>(&self, stream: &mut S) -> Result<(), CapsuleError> {
+        let mut buf = BytesMut::new();
+        self.encode(&mut buf);
+        stream
+            .write_all_buf(&mut buf)
+            .await
+            .map_err(|_| CapsuleError::UnexpectedEnd)?;
+        Ok(())
     }
 }
 

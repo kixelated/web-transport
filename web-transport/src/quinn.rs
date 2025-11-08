@@ -79,13 +79,7 @@ impl Server {
     /// Accept an incoming connection.
     pub async fn accept(&mut self) -> Result<Option<Session>, Error> {
         match self.inner.accept().await {
-            Some(session) => Ok(Some(
-                session
-                    .ok()
-                    .await
-                    .map_err(|e| Error::Write(e.into()))?
-                    .into(),
-            )),
+            Some(session) => Ok(Some(session.ok().await?.into())),
             None => Ok(None),
         }
     }
@@ -308,6 +302,9 @@ impl RecvStream {
 pub enum Error {
     #[error("session error: {0}")]
     Session(#[from] quinn::SessionError),
+
+    #[error("server error: {0}")]
+    Server(#[from] quinn::ServerError),
 
     #[error("client error: {0}")]
     Client(#[from] quinn::ClientError),

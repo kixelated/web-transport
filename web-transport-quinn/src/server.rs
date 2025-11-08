@@ -153,13 +153,13 @@ impl Request {
     }
 
     /// Accept the session, returning a 200 OK.
-    pub async fn ok(mut self) -> Result<Session, quinn::WriteError> {
+    pub async fn ok(mut self) -> Result<Session, ServerError> {
         self.connect.respond(http::StatusCode::OK).await?;
         Ok(Session::new(self.conn, self.settings, self.connect))
     }
 
     /// Reject the session, returing your favorite HTTP status code.
-    pub async fn close(mut self, status: http::StatusCode) -> Result<(), quinn::WriteError> {
+    pub async fn close(mut self, status: http::StatusCode) -> Result<(), ServerError> {
         self.connect.respond(status).await?;
         Ok(())
     }
