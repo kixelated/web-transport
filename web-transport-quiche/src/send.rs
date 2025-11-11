@@ -1,32 +1,34 @@
 use std::{
-    future::Future,
     io,
     pin::Pin,
     task::{Context, Poll},
 };
 
-use bytes::{Buf, Bytes};
-use futures::ready;
+use bytes::Buf;
 use tokio::io::AsyncWrite;
 
-use crate::ez;
+use crate::{ez, SessionError};
 
 #[derive(thiserror::Error, Debug)]
 pub enum SendError {
-    #[error("connection error: {0}")]
-    Connection(#[from] ez::ConnectionError),
+    #[error("session error: {0}")]
+    Session(#[from] SessionError),
 
-    #[error("STOP_SENDING: {0}")]
+    #[error("stop sending: {0}")]
     Stop(u32),
+
+    #[error("invalid stop code: {0}")]
+    InvalidStop(u64),
 }
 
 impl From<ez::SendError> for SendError {
     fn from(err: ez::SendError) -> Self {
         match err {
-            ez::SendError::Stop(code) => {
-                SendError::Stop(web_transport_proto::error_from_http3(code).unwrap_or(code as u32))
-            }
-            ez::SendError::Connection(e) => SendError::Connection(e),
+            ez::SendError::Stop(code) => match web_transport_proto::error_from_http3(code) {
+                Some(code) => SendError::Stop(code),
+                None => SendError::InvalidStop(code),
+            },
+            ez::SendError::Connection(e) => SendError::Session(e.into()),
         }
     }
 }
@@ -49,11 +51,11 @@ impl SendStream {
             .map_err(Into::into)
     }
 
-    pub async fn write_chunk(&mut self, buf: Bytes) -> Result<(), SendError> {
+    pub async fn write_buf<B: Buf>(&mut self, buf: &mut B) -> Result<usize, SendError> {
         self.inner
             .as_mut()
             .unwrap()
-            .write_chunk(buf)
+            .write_buf(buf)
             .await
             .map_err(Into::into)
     }
@@ -67,11 +69,11 @@ impl SendStream {
             .map_err(Into::into)
     }
 
-    pub async fn write_buf<B: Buf>(&mut self, buf: &mut B) -> Result<(), SendError> {
+    pub async fn write_buf_all<B: Buf>(&mut self, buf: &mut B) -> Result<(), SendError> {
         self.inner
             .as_mut()
             .unwrap()
-            .write_buf(buf)
+            .write_buf_all(buf)
             .await
             .map_err(Into::into)
     }
@@ -100,22 +102,23 @@ impl AsyncWrite for SendStream {
         cx: &mut Context<'_>,
         buf: &[u8],
     ) -> Poll<Result<usize, io::Error>> {
-        let fut = self.write(buf);
-        tokio::pin!(fut);
-
-        Poll::Ready(
-            ready!(fut.poll(cx))
-                .map_err(|err| io::Error::new(io::ErrorKind::Other, err.to_string())),
-        )
+        let inner = self.inner.as_mut().unwrap();
+        tokio::pin!(inner);
+        inner.poll_write(cx, buf)
     }
 
-    fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Result<(), io::Error>> {
-        // Flushing happens automatically via the driver
-        Poll::Ready(Ok(()))
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), io::Error>> {
+        let inner = self.inner.as_mut().unwrap();
+        tokio::pin!(inner);
+        inner.poll_flush(cx)
     }
 
-    fn poll_shutdown(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Result<(), io::Error>> {
-        // We purposely don't implement this; use finish() instead because it takes self.
-        Poll::Ready(Ok(()))
+    fn poll_shutdown(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Result<(), io::Error>> {
+        let inner = self.inner.as_mut().unwrap();
+        tokio::pin!(inner);
+        inner.poll_shutdown(cx)
     }
 }

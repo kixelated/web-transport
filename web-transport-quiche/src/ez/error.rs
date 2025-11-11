@@ -1,14 +1,25 @@
 use std::sync::Arc;
 use thiserror::Error;
+use tokio_quiche::quiche;
 
 /// An errors returned by [`Session`], split based on if they are underlying QUIC errors or WebTransport errors.
 #[derive(Clone, Error, Debug)]
 pub enum ConnectionError {
     #[error("quiche error: {0}")]
-    Quiche(#[from] Arc<tokio_quiche::BoxError>),
+    Quiche(#[from] quiche::Error),
 
-    #[error("CONNECTION_CLOSE: code={0} reason={1}")]
-    Closed(u64, String),
+    #[error("remote CONNECTION_CLOSE: code={0} reason={1}")]
+    Remote(u64, String),
+
+    #[error("local CONNECTION_CLOSE: code={0} reason={1}")]
+    Local(u64, String),
+
+    /// All Connection references were dropped without an explicit close.
+    #[error("connection dropped")]
+    Dropped,
+
+    #[error("unknown error: {0}")]
+    Unknown(String),
 }
 
 /// An error when writing to [`SendStream`].

@@ -37,8 +37,8 @@ impl Server {
     pub async fn accept(&mut self) -> Option<Request> {
         loop {
             tokio::select! {
-                res = self.inner.accept() => {
-                    let conn = res?;
+                Some(conn) = self.inner.accept() => {
+                    println!("starting webtransport handshake");
                     self.accept.push(Box::pin(Request::accept(conn)));
                 }
                 Some(res) = self.accept.next() => {
@@ -46,6 +46,7 @@ impl Server {
                         return Some(session)
                     }
                 }
+                else => return None,
             }
         }
     }

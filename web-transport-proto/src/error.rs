@@ -8,7 +8,7 @@ pub fn error_from_http3(code: u64) -> Option<u32> {
     }
 
     let code = code - ERROR_FIRST;
-    let code = code / 0x1f;
+    let code = code - code / 0x1f;
 
     Some(code.try_into().unwrap())
 }

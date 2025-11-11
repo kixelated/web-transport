@@ -85,6 +85,7 @@ impl Session {
         let mut this2 = this.clone();
         tokio::spawn(async move {
             let (code, reason) = this2.run_closed(connect).await;
+            // TODO We shouldn't be closing the QUIC connection with the same error.
             this2.close(code, reason.as_bytes());
         });
 
@@ -103,8 +104,7 @@ impl Session {
                 Ok(web_transport_proto::Capsule::Unknown { typ, payload }) => {
                     log::warn!("unknown capsule: type={typ} size={}", payload.len());
                 }
-                Err(err) => {
-                    log::warn!("control stream capsule error: {err:?}");
+                Err(_) => {
                     return (1, "capsule error".to_string());
                 }
             }

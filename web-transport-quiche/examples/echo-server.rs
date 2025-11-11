@@ -51,6 +51,8 @@ async fn main() -> anyhow::Result<()> {
 
     // Accept new connections.
     while let Some(conn) = server.accept().await {
+        log::info!("accepted connection, url={}", conn.url());
+
         tokio::spawn(async move {
             match run_conn(conn).await {
                 Ok(()) => log::info!("connection closed"),
@@ -58,6 +60,8 @@ async fn main() -> anyhow::Result<()> {
             }
         });
     }
+
+    log::info!("server closed");
 
     Ok(())
 }
@@ -76,7 +80,7 @@ async fn run_conn(request: web_transport_quiche::Request) -> anyhow::Result<()> 
         log::info!("accepted stream");
 
         // Read the message and echo it back.
-        let mut msg: Bytes = recv.read_all(1024).await?;
+        let mut msg: Bytes = recv.read_all().await?;
         log::info!("recv: {}", String::from_utf8_lossy(&msg));
 
         send.write_buf(&mut msg).await?;

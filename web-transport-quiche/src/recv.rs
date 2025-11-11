@@ -1,22 +1,23 @@
 use std::{
-    future::Future,
     pin::Pin,
     task::{Context, Poll},
 };
 
 use bytes::{BufMut, Bytes};
-use futures::ready;
 use tokio::io::{AsyncRead, ReadBuf};
 
-use crate::ez;
+use crate::{ez, SessionError};
 
 #[derive(thiserror::Error, Debug)]
 pub enum RecvError {
-    #[error("connection error: {0}")]
-    Connection(#[from] ez::ConnectionError),
+    #[error("session error: {0}")]
+    Session(#[from] SessionError),
 
-    #[error("RESET_STREAM({0})")]
+    #[error("reset stream: {0})")]
     Reset(u32),
+
+    #[error("invalid reset code: {0}")]
+    InvalidReset(u64),
 
     #[error("stream closed")]
     Closed,
@@ -25,10 +26,11 @@ pub enum RecvError {
 impl From<ez::RecvError> for RecvError {
     fn from(err: ez::RecvError) -> Self {
         match err {
-            ez::RecvError::Reset(code) => {
-                RecvError::Reset(web_transport_proto::error_from_http3(code).unwrap_or(code as u32))
-            }
-            ez::RecvError::Connection(e) => RecvError::Connection(e),
+            ez::RecvError::Reset(code) => match web_transport_proto::error_from_http3(code) {
+                Some(code) => RecvError::Reset(code),
+                None => RecvError::InvalidReset(code),
+            },
+            ez::RecvError::Connection(e) => RecvError::Session(e.into()),
             ez::RecvError::Closed => RecvError::Closed,
         }
     }
@@ -70,11 +72,11 @@ impl RecvStream {
             .map_err(Into::into)
     }
 
-    pub async fn read_all(&mut self, max: usize) -> Result<Bytes, RecvError> {
+    pub async fn read_all(&mut self) -> Result<Bytes, RecvError> {
         self.inner
             .as_mut()
             .unwrap()
-            .read_all(max)
+            .read_all()
             .await
             .map_err(Into::into)
     }
@@ -101,12 +103,8 @@ impl AsyncRead for RecvStream {
         cx: &mut Context<'_>,
         buf: &mut ReadBuf<'_>,
     ) -> Poll<Result<(), std::io::Error>> {
-        let fut = self.read_buf(buf);
-        tokio::pin!(fut);
-
-        Poll::Ready(
-            ready!(fut.poll(cx))
-                .map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, err.to_string())),
-        )
+        let inner = self.inner.as_mut().unwrap();
+        tokio::pin!(inner);
+        inner.poll_read(cx, buf)
     }
 }

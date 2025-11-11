@@ -2,7 +2,7 @@ use crate::{ez, RecvStream, SendStream};
 
 use super::{Connect, Settings};
 use futures::{ready, stream::FuturesUnordered, Stream, StreamExt};
-use web_transport_proto::{Frame, StreamUni, VarInt};
+use web_transport_proto::{error_from_http3, Frame, StreamUni, VarInt};
 
 use std::{
     future::{poll_fn, Future},
@@ -16,17 +16,36 @@ use url::Url;
 /// An errors returned by [`crate::Session`], split based on if they are underlying QUIC errors or WebTransport errors.
 #[derive(Clone, thiserror::Error, Debug)]
 pub enum SessionError {
-    #[error("connection error: {0}")]
-    Connection(#[from] ez::ConnectionError),
+    #[error("remote closed: code={0} reason={1}")]
+    Remote(u32, String),
 
-    #[error("closed: code={0} reason={1}")]
-    Closed(u32, String),
+    #[error("local closed: code={0} reason={1}")]
+    Local(u32, String),
+
+    #[error("connection error: {0}")]
+    Connection(ez::ConnectionError),
 
     #[error("unknown session")]
     Unknown,
 
     #[error("invalid stream header")]
     Header,
+}
+
+impl From<ez::ConnectionError> for SessionError {
+    fn from(err: ez::ConnectionError) -> Self {
+        match &err {
+            ez::ConnectionError::Remote(code, reason) => match error_from_http3(*code) {
+                Some(code) => SessionError::Remote(code, reason.clone()),
+                None => SessionError::Connection(err),
+            },
+            ez::ConnectionError::Local(code, reason) => match error_from_http3(*code) {
+                Some(code) => SessionError::Local(code, reason.clone()),
+                None => SessionError::Connection(err),
+            },
+            _ => SessionError::Connection(err),
+        }
+    }
 }
 
 /// An established WebTransport session.
@@ -97,14 +116,15 @@ impl Session {
         loop {
             match web_transport_proto::Capsule::read(&mut recv).await {
                 Ok(web_transport_proto::Capsule::CloseWebTransportSession { code, reason }) => {
+                    // TODO We shouldn't be closing the QUIC connection with the same error.
+                    // Instead, we should return it to the application.
                     self.close(code, &reason);
                     return;
                 }
                 Ok(web_transport_proto::Capsule::Unknown { typ, payload }) => {
                     log::warn!("unknown capsule: type={typ} size={}", payload.len());
                 }
-                Err(err) => {
-                    log::warn!("control stream capsule error: {err:?}");
+                Err(_) => {
                     self.close(500, "capsule error");
                     return;
                 }
