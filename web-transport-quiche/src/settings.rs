@@ -10,7 +10,7 @@ pub enum SettingsError {
     UnexpectedEnd,
 
     #[error("protocol error: {0}")]
-    ProtoError(#[from] web_transport_proto::SettingsError),
+    Proto(#[from] web_transport_proto::SettingsError),
 
     #[error("WebTransport is not supported")]
     WebTransportUnsupported,
@@ -18,11 +18,8 @@ pub enum SettingsError {
     #[error("connection error")]
     Connection(#[from] ez::ConnectionError),
 
-    #[error("read error")]
-    Read(#[from] ez::RecvError),
-
-    #[error("write error")]
-    Write(#[from] ez::SendError),
+    #[error("stream error: {0}")]
+    Stream(#[from] ez::StreamError),
 }
 
 pub struct Settings {

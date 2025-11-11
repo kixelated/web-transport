@@ -40,20 +40,42 @@ pub enum ClientError {
 #[derive(Clone, Error, Debug)]
 pub enum SessionError {
     #[error("connection error: {0}")]
-    ConnectionError(#[from] quinn::ConnectionError),
+    Connection(quinn::ConnectionError),
 
     #[error("webtransport error: {0}")]
-    WebTransportError(#[from] WebTransportError),
+    WebTransport(#[from] WebTransportError),
 
-    #[error("send datagram error: {0}")]
-    SendDatagramError(#[from] quinn::SendDatagramError),
+    #[error("datagram error: {0}")]
+    Datagram(#[from] quinn::SendDatagramError),
+}
+
+impl From<quinn::ConnectionError> for SessionError {
+    fn from(e: quinn::ConnectionError) -> Self {
+        match &e {
+            quinn::ConnectionError::ApplicationClosed(close) => {
+                match web_transport_proto::error_from_http3(close.error_code.into_inner()) {
+                    Some(code) => WebTransportError::ApplicationClosed(
+                        code,
+                        String::from_utf8_lossy(&close.reason).into_owned(),
+                    )
+                    .into(),
+                    None => SessionError::Connection(e),
+                }
+            }
+            quinn::ConnectionError::LocallyClosed => WebTransportError::LocallyClosed.into(),
+            _ => SessionError::Connection(e),
+        }
+    }
 }
 
 /// An error that can occur when reading/writing the WebTransport stream header.
 #[derive(Clone, Error, Debug)]
 pub enum WebTransportError {
-    #[error("closed: code={0} reason={1}")]
-    Closed(u32, String),
+    #[error("application closed: code={0} reason={1}")]
+    ApplicationClosed(u32, String),
+
+    #[error("locally closed")]
+    LocallyClosed,
 
     #[error("unknown session")]
     UnknownSession,
@@ -240,6 +262,48 @@ pub enum ServerError {
 //     }
 // }
 
-impl web_transport_trait::Error for SessionError {}
-impl web_transport_trait::Error for WriteError {}
-impl web_transport_trait::Error for ReadError {}
+impl web_transport_trait::Error for SessionError {
+    fn session_error(&self) -> Option<(u32, String)> {
+        if let SessionError::WebTransport(e) = self {
+            if let WebTransportError::ApplicationClosed(code, reason) = e {
+                return Some((*code, reason.to_string()));
+            }
+        }
+
+        None
+    }
+}
+
+impl web_transport_trait::Error for WriteError {
+    fn session_error(&self) -> Option<(u32, String)> {
+        if let WriteError::SessionError(e) = self {
+            return e.session_error();
+        }
+
+        None
+    }
+
+    fn stream_error(&self) -> Option<u32> {
+        match self {
+            WriteError::Stopped(code) => Some(*code),
+            _ => None,
+        }
+    }
+}
+
+impl web_transport_trait::Error for ReadError {
+    fn session_error(&self) -> Option<(u32, String)> {
+        if let ReadError::SessionError(e) = self {
+            return e.session_error();
+        }
+
+        None
+    }
+
+    fn stream_error(&self) -> Option<u32> {
+        match self {
+            ReadError::Reset(code) => Some(*code),
+            _ => None,
+        }
+    }
+}

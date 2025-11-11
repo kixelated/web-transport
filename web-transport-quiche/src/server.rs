@@ -1,14 +1,16 @@
+use std::sync::Arc;
+
 use super::{Connect, ConnectError, Settings, SettingsError};
 use futures::StreamExt;
 use futures::{future::BoxFuture, stream::FuturesUnordered};
 use url::Url;
 
-use crate::{ez, Session};
+use crate::{ez, Connection};
 
 #[derive(thiserror::Error, Debug, Clone)]
 pub enum ServerError {
-    #[error("quiche error: {0}")]
-    Quiche(#[from] ez::ServerError),
+    #[error("io error: {0}")]
+    Io(Arc<std::io::Error>),
 
     #[error("settings error: {0}")]
     Settings(#[from] SettingsError),
@@ -17,15 +19,21 @@ pub enum ServerError {
     Connect(#[from] ConnectError),
 }
 
+impl From<std::io::Error> for ServerError {
+    fn from(err: std::io::Error) -> Self {
+        ServerError::Io(Arc::new(err))
+    }
+}
+
 pub struct Server {
     inner: ez::Server,
     accept: FuturesUnordered<BoxFuture<'static, Result<Request, ServerError>>>,
 }
 
 impl Server {
-    /// Manaully create a new server with a manually constructed Endpoint.
+    /// Wrap an [ez::Server], abstracting away the annoying HTTP/3 handshake required for WebTransport.
     ///
-    /// NOTE: The ALPN must be set to `h3` for WebTransport to work.
+    /// The ALPN must be set to `h3`.
     pub fn new(inner: ez::Server) -> Self {
         Self {
             inner,
@@ -37,13 +45,11 @@ impl Server {
     pub async fn accept(&mut self) -> Option<Request> {
         loop {
             tokio::select! {
-                Some(conn) = self.inner.accept() => {
-                    println!("starting webtransport handshake");
-                    self.accept.push(Box::pin(Request::accept(conn)));
-                }
+                Some(conn) = self.inner.accept() => self.accept.push(Box::pin(Request::accept(conn))),
                 Some(res) = self.accept.next() => {
-                    if let Ok(session) = res {
-                        return Some(session)
+                    match res {
+                        Ok(session) => return Some(session),
+                        Err(err) => log::warn!("ignoring failed HTTP/3 handshake: {}", err),
                     }
                 }
                 else => return None,
@@ -82,13 +88,13 @@ impl Request {
     }
 
     /// Accept the session, returning a 200 OK.
-    pub async fn ok(mut self) -> Result<Session, ez::SendError> {
+    pub async fn ok(mut self) -> Result<Connection, ServerError> {
         self.connect.respond(http::StatusCode::OK).await?;
-        Ok(Session::new(self.conn, self.settings, self.connect))
+        Ok(Connection::new(self.conn, self.settings, self.connect))
     }
 
     /// Reject the session, returing your favorite HTTP status code.
-    pub async fn close(mut self, status: http::StatusCode) -> Result<(), ez::SendError> {
+    pub async fn close(mut self, status: http::StatusCode) -> Result<(), ServerError> {
         self.connect.respond(status).await?;
         Ok(())
     }

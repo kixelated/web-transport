@@ -1,8 +1,8 @@
-use crate::{ez, RecvStream, SendStream};
+use crate::{ez, ClientError, RecvStream, SendStream, SessionError};
 
 use super::{Connect, Settings};
 use futures::{ready, stream::FuturesUnordered, Stream, StreamExt};
-use web_transport_proto::{error_from_http3, Frame, StreamUni, VarInt};
+use web_transport_proto::{Frame, StreamUni, VarInt};
 
 use std::{
     future::{poll_fn, Future},
@@ -13,45 +13,32 @@ use std::{
 
 use url::Url;
 
-/// An errors returned by [`crate::Session`], split based on if they are underlying QUIC errors or WebTransport errors.
-#[derive(Clone, thiserror::Error, Debug)]
-pub enum SessionError {
-    #[error("remote closed: code={0} reason={1}")]
-    Remote(u32, String),
+// "conn" in ascii; if you see this then close(code)
+// hex: 0x636E6E6F, or 0x52E50ACE926F as an HTTP error code
+// decimal: 1668181615, or 91143682298479 as an HTTP error code
+const DROP_CODE: u64 = web_transport_proto::error_to_http3(0x636E6E6F);
 
-    #[error("local closed: code={0} reason={1}")]
-    Local(u32, String),
-
-    #[error("connection error: {0}")]
-    Connection(ez::ConnectionError),
-
-    #[error("unknown session")]
-    Unknown,
-
-    #[error("invalid stream header")]
-    Header,
+struct ConnectionDrop {
+    conn: ez::Connection,
 }
 
-impl From<ez::ConnectionError> for SessionError {
-    fn from(err: ez::ConnectionError) -> Self {
-        match &err {
-            ez::ConnectionError::Remote(code, reason) => match error_from_http3(*code) {
-                Some(code) => SessionError::Remote(code, reason.clone()),
-                None => SessionError::Connection(err),
-            },
-            ez::ConnectionError::Local(code, reason) => match error_from_http3(*code) {
-                Some(code) => SessionError::Local(code, reason.clone()),
-                None => SessionError::Connection(err),
-            },
-            _ => SessionError::Connection(err),
+impl Drop for ConnectionDrop {
+    fn drop(&mut self) {
+        if !self.conn.is_closed() {
+            log::warn!("connection dropped without calling `close`");
+            self.conn.close(DROP_CODE, "connection dropped");
         }
     }
 }
 
 /// An established WebTransport session.
 #[derive(Clone)]
-pub struct Session {
+pub struct Connection {
     conn: ez::Connection,
+
+    // Dropped when all references are dropped.
+    #[allow(dead_code)]
+    drop: Arc<ConnectionDrop>,
 
     // The session ID, as determined by the stream ID of the connect request.
     session_id: Option<VarInt>,
@@ -62,6 +49,7 @@ pub struct Session {
     // Cache the headers in front of each stream we open.
     header_uni: Vec<u8>,
     header_bi: Vec<u8>,
+    #[allow(unused)]
     header_datagram: Vec<u8>,
 
     // Keep a reference to the settings and connect stream to avoid closing them until dropped.
@@ -72,7 +60,7 @@ pub struct Session {
     url: Url,
 }
 
-impl Session {
+impl Connection {
     pub(crate) fn new(conn: ez::Connection, settings: Settings, connect: Connect) -> Self {
         // The session ID is the stream ID of the CONNECT request.
         let session_id = connect.session_id();
@@ -92,8 +80,11 @@ impl Session {
         // Accept logic is stateful, so use an Arc<Mutex> to share it.
         let accept = SessionAccept::new(conn.clone(), session_id);
 
+        let drop = Arc::new(ConnectionDrop { conn: conn.clone() });
+
         let this = Self {
             conn,
+            drop,
             accept: Some(Arc::new(Mutex::new(accept))),
             session_id: Some(session_id),
             header_uni,
@@ -132,10 +123,9 @@ impl Session {
         }
     }
 
-    /*
     /// Connect using an established QUIC connection if you want to create the connection yourself.
     /// This will only work with a brand new QUIC connection using the HTTP/3 ALPN.
-    pub async fn connect(conn: ez::Connection, url: Url) -> Result<Session, ClientError> {
+    pub async fn connect(conn: ez::Connection, url: Url) -> Result<Connection, ClientError> {
         // Perform the H3 handshake by sending/reciving SETTINGS frames.
         let settings = Settings::connect(&conn).await?;
 
@@ -144,11 +134,10 @@ impl Session {
 
         // Return the resulting session with a reference to the control/connect streams.
         // If either stream is closed, then the session will be closed, so we need to keep them around.
-        let session = Session::new(conn, settings, connect);
+        let session = Connection::new(conn, settings, connect);
 
         Ok(session)
     }
-    */
 
     /// Accept a new unidirectional stream. See [`quinn::Connection::accept_uni`].
     pub async fn accept_uni(&self) -> Result<RecvStream, SessionError> {
@@ -261,7 +250,7 @@ impl Session {
     */
 
     /// Immediately close the connection with an error code and reason.
-    pub fn close(self, code: u32, reason: &str) {
+    pub fn close(&self, code: u32, reason: &str) {
         let code = if self.session_id.is_some() {
             web_transport_proto::error_to_http3(code)
         } else {
@@ -281,8 +270,10 @@ impl Session {
     /// This is used to pretend like a QUIC connection is a WebTransport session.
     /// It's a hack, but it makes it much easier to support WebTransport and raw QUIC simultaneously.
     pub fn raw(conn: ez::Connection, url: Url) -> Self {
+        let drop = Arc::new(ConnectionDrop { conn: conn.clone() });
         Self {
             conn,
+            drop,
             session_id: None,
             header_uni: Default::default(),
             header_bi: Default::default(),
@@ -295,6 +286,48 @@ impl Session {
 
     pub fn url(&self) -> &Url {
         &self.url
+    }
+}
+
+impl web_transport_trait::Session for Connection {
+    type SendStream = SendStream;
+    type RecvStream = RecvStream;
+    type Error = SessionError;
+
+    async fn accept_uni(&self) -> Result<RecvStream, SessionError> {
+        self.accept_uni().await
+    }
+
+    async fn accept_bi(&self) -> Result<(SendStream, RecvStream), SessionError> {
+        self.accept_bi().await
+    }
+
+    async fn open_bi(&self) -> Result<(SendStream, RecvStream), SessionError> {
+        self.open_bi().await
+    }
+
+    async fn open_uni(&self) -> Result<SendStream, SessionError> {
+        self.open_uni().await
+    }
+
+    fn send_datagram(&self, _payload: bytes::Bytes) -> Result<(), Self::Error> {
+        todo!()
+    }
+
+    async fn recv_datagram(&self) -> Result<bytes::Bytes, SessionError> {
+        todo!()
+    }
+
+    fn max_datagram_size(&self) -> usize {
+        todo!()
+    }
+
+    fn close(&self, code: u32, reason: &str) {
+        self.close(code, reason)
+    }
+
+    async fn closed(&self) -> SessionError {
+        self.closed().await
     }
 }
 

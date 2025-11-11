@@ -48,4 +48,28 @@ impl From<tokio_tungstenite::tungstenite::Error> for Error {
     }
 }
 
-impl web_transport_trait::Error for Error {}
+impl web_transport_trait::Error for Error {
+    fn session_error(&self) -> Option<(u32, String)> {
+        match self {
+            // TODO We should only support u32 on the wire?
+            Error::ConnectionClosed { code, reason } => match code.into_inner().try_into() {
+                Ok(code) => Some((code, reason.clone())),
+                Err(_) => None,
+            },
+            _ => None,
+        }
+    }
+
+    fn stream_error(&self) -> Option<u32> {
+        match self {
+            // TODO We should only support u32 on the wire?
+            Error::StreamReset(code) | Error::StreamStop(code) => {
+                match code.into_inner().try_into() {
+                    Ok(code) => Some(code),
+                    Err(_) => None,
+                }
+            }
+            _ => None,
+        }
+    }
+}

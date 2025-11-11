@@ -47,7 +47,7 @@ async fn run(stream: tokio::net::TcpStream) -> anyhow::Result<()> {
                 println!("Echoing back {} bytes on unidirectional stream: {}", data.len(), String::from_utf8_lossy(&data));
                 echo.write_all(&data).await?;
 
-                echo.finish().await?; // optional, wait for an ack
+                echo.finish()?;
 
                 println!("Unidirectional stream closed");
             }
@@ -59,14 +59,13 @@ async fn run(stream: tokio::net::TcpStream) -> anyhow::Result<()> {
                 println!("Received {} bytes on bidirectional stream", data.len());
 
                 send.write_all(&data).await?;
+                send.finish()?;
                 println!("Echoing back {} bytes on bidirectional stream: {}", data.len(), String::from_utf8_lossy(&data));
-
-                send.finish().await?; // optional, wait for an ack
 
                 println!("Bidirectional stream closed");
             }
-            result = session.closed() => {
-                return result.map_err(|e| e.into());
+            err = session.closed() => {
+                return Err(err.into());
             }
         }
     }

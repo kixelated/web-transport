@@ -16,11 +16,8 @@ pub enum ConnectError {
     #[error("connection error")]
     Connection(#[from] ez::ConnectionError),
 
-    #[error("read error")]
-    Read(#[from] ez::RecvError),
-
-    #[error("write error")]
-    Write(#[from] ez::SendError),
+    #[error("stream error")]
+    Stream(#[from] ez::StreamError),
 
     #[error("http error status: {0}")]
     Status(http::StatusCode),
@@ -55,7 +52,7 @@ impl Connect {
     }
 
     // Called by the server to send a response to the client.
-    pub async fn respond(&mut self, status: http::StatusCode) -> Result<(), ez::SendError> {
+    pub async fn respond(&mut self, status: http::StatusCode) -> Result<(), ConnectError> {
         let resp = ConnectResponse { status };
 
         log::debug!("sending CONNECT response: {resp:?}");
