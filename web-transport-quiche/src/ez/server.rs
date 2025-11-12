@@ -5,11 +5,13 @@ use tokio::task::JoinSet;
 use tokio_quiche::socket::SocketCapabilities;
 use tokio_quiche::{
     quic::SimpleConnectionIdGenerator,
-    settings::{Hooks, QuicSettings, TlsCertificatePaths},
+    settings::{Hooks, TlsCertificatePaths},
     socket::QuicListener,
 };
 
-use super::{Connection, ConnectionClosed, DefaultMetrics, Driver, DriverWakeup, Lock, Metrics};
+use super::{
+    Connection, ConnectionClosed, DefaultMetrics, Driver, DriverWakeup, Lock, Metrics, Settings,
+};
 
 /// Used with [ServerBuilder] to require specific parameters.
 #[derive(Default)]
@@ -22,7 +24,7 @@ pub struct ServerWithListener {
 }
 
 pub struct ServerBuilder<M: Metrics = DefaultMetrics, S = ServerInit> {
-    settings: QuicSettings,
+    settings: Settings,
     metrics: M,
     state: S,
 }
@@ -36,7 +38,7 @@ impl Default for ServerBuilder<DefaultMetrics> {
 impl<M: Metrics> ServerBuilder<M, ServerInit> {
     pub fn new(m: M) -> Self {
         Self {
-            settings: QuicSettings::default(),
+            settings: Settings::default(),
             metrics: m,
             state: ServerInit {},
         }
@@ -68,7 +70,7 @@ impl<M: Metrics> ServerBuilder<M, ServerInit> {
         self.next().with_bind(addrs)
     }
 
-    pub fn with_settings(mut self, settings: QuicSettings) -> Self {
+    pub fn with_settings(mut self, settings: Settings) -> Self {
         self.settings = settings;
         self
     }
@@ -105,7 +107,7 @@ impl<M: Metrics> ServerBuilder<M, ServerWithListener> {
         self.with_socket(socket)
     }
 
-    pub fn with_settings(mut self, settings: QuicSettings) -> Self {
+    pub fn with_settings(mut self, settings: Settings) -> Self {
         self.settings = settings;
         self
     }
@@ -159,7 +161,6 @@ impl<M: Metrics> Server<M> {
         let mut rx = socket.into_inner();
         while let Some(initial) = rx.recv().await {
             let initial = initial?;
-            println!("accepted initial");
 
             let accept_bi = flume::unbounded();
             let accept_uni = flume::unbounded();
@@ -184,7 +185,6 @@ impl<M: Metrics> Server<M> {
                 closed_remote.clone(),
             );
 
-            println!("starting driver");
             let inner = initial.start(session);
             let connection = Connection::new(
                 inner,
@@ -200,7 +200,6 @@ impl<M: Metrics> Server<M> {
             );
 
             if accept.send(connection).await.is_err() {
-                println!("closed");
                 return Ok(());
             }
         }

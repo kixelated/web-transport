@@ -71,15 +71,11 @@ impl RecvState {
         waker: &Waker,
         max: usize,
     ) -> Poll<Result<Option<Bytes>, StreamError>> {
-        println!("poll_read_chunk: {:?} {:?}", self.id, max);
-
         if let Some(reset) = self.reset {
-            println!("returning reset: {:?} {:?}", self.id, reset);
             return Poll::Ready(Err(StreamError::Reset(reset)));
         }
 
         if let Some(stop) = self.stop {
-            println!("returning stop: {:?} {:?}", self.id, stop);
             return Poll::Ready(Err(StreamError::Stop(stop)));
         }
 
@@ -88,12 +84,10 @@ impl RecvState {
                 let remain = chunk.split_off(max);
                 self.queued.push_front(remain);
             }
-            println!("returning chunk: {:?} {:?}", self.id, chunk.len());
             return Poll::Ready(Ok(Some(chunk)));
         }
 
         if self.fin {
-            println!("returning fin: {:?}", self.id);
             return Poll::Ready(Ok(None));
         }
 
@@ -104,7 +98,6 @@ impl RecvState {
 
         self.max = max;
         self.blocked = Some(waker.clone());
-        println!("blocking for read: {:?}", self.id);
 
         Poll::Pending
     }
@@ -123,14 +116,12 @@ impl RecvState {
     }
 
     pub fn flush(&mut self, qconn: &mut QuicheConnection) -> quiche::Result<Option<Waker>> {
-        if let Some(code) = self.reset {
-            println!("already reset: {:?} {:?}", self.id, code);
-            println!("TODO clean up");
+        if self.reset.is_some() {
+            // TODO clean up
             return Ok(self.blocked.take());
         }
 
         if let Some(stop) = self.stop {
-            println!("shutting down recv: {:?} {:?}", self.id, stop);
             qconn.stream_shutdown(self.id.into(), quiche::Shutdown::Read, stop)?;
             return Ok(self.blocked.take());
         }
@@ -156,7 +147,6 @@ impl RecvState {
 
             match qconn.stream_recv(self.id.into(), &mut buf[..n]) {
                 Ok((n, done)) => {
-                    println!("received chunk: {:?} {:?} {:?}", self.id, n, done);
                     // Advance the buffer by the number of bytes read.
                     unsafe { self.buf.set_len(self.buf.len() + n) };
 
@@ -166,10 +156,7 @@ impl RecvState {
 
                     changed = true;
 
-                    println!("capacity after receiving: {:?} {:?}", self.id, self.max);
-
                     if done {
-                        println!("setting fin: {:?}", self.id);
                         self.fin = true;
                         return Ok(self.blocked.take());
                     }
@@ -177,15 +164,12 @@ impl RecvState {
                 Err(quiche::Error::Done) => {
                     if qconn.stream_finished(self.id.into()) {
                         self.fin = true;
-                        println!("waking blocked for FIN: {:?}", self.id);
                         return Ok(self.blocked.take());
                     }
                     break;
                 }
                 Err(quiche::Error::StreamReset(code)) => {
-                    println!("stream reset: {:?} {:?}", self.id, code);
                     self.reset = Some(code);
-                    println!("waking blocked for stream reset: {:?}", self.id);
                     return Ok(self.blocked.take());
                 }
                 Err(e) => return Err(e.into()),
@@ -193,7 +177,6 @@ impl RecvState {
         }
 
         if changed {
-            println!("waking blocked for received chunk: {:?}", self.id);
             Ok(self.blocked.take())
         } else {
             // Don't wake up the application if nothing was received.
@@ -253,7 +236,6 @@ impl RecvStream {
         {
             Some(n) => {
                 unsafe { buf.advance_mut(n) };
-                println!("!!! read buf: {:?} {:?} !!!", self.id, n);
                 Ok(Some(n))
             }
             None => Ok(None),
@@ -262,15 +244,12 @@ impl RecvStream {
 
     pub async fn read_all(&mut self) -> Result<Bytes, StreamError> {
         let mut buf = BytesMut::new();
-        println!("!!! reading all: {:?} !!!", self.id);
         loop {
             match self.read_buf(&mut buf).await? {
                 Some(_) => continue,
                 None => break,
             }
         }
-
-        println!("!!! read all: {:?} {:?} !!!", self.id, buf.len());
 
         Ok(buf.freeze())
     }

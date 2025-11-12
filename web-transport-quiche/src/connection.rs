@@ -1,6 +1,5 @@
-use crate::{ez, ClientError, RecvStream, SendStream, SessionError};
+use crate::{ez, h3, ClientError, RecvStream, SendStream, SessionError};
 
-use super::{Connect, Settings};
 use futures::{ready, stream::FuturesUnordered, Stream, StreamExt};
 use web_transport_proto::{Frame, StreamUni, VarInt};
 
@@ -25,7 +24,7 @@ struct ConnectionDrop {
 impl Drop for ConnectionDrop {
     fn drop(&mut self) {
         if !self.conn.is_closed() {
-            log::warn!("connection dropped without calling `close`");
+            tracing::warn!("connection dropped without calling `close`");
             self.conn.close(DROP_CODE, "connection dropped");
         }
     }
@@ -54,14 +53,14 @@ pub struct Connection {
 
     // Keep a reference to the settings and connect stream to avoid closing them until dropped.
     #[allow(dead_code)]
-    settings: Option<Arc<Settings>>,
+    settings: Option<Arc<h3::Settings>>,
 
     // The URL used to create the session.
     url: Url,
 }
 
 impl Connection {
-    pub(crate) fn new(conn: ez::Connection, settings: Settings, connect: Connect) -> Self {
+    pub(crate) fn new(conn: ez::Connection, settings: h3::Settings, connect: h3::Connect) -> Self {
         // The session ID is the stream ID of the CONNECT request.
         let session_id = connect.session_id();
 
@@ -101,7 +100,7 @@ impl Connection {
     }
 
     // Keep reading from the control stream until it's closed.
-    async fn run_closed(self, connect: Connect) {
+    async fn run_closed(self, connect: h3::Connect) {
         let (_send, mut recv) = connect.into_inner();
 
         loop {
@@ -113,7 +112,7 @@ impl Connection {
                     return;
                 }
                 Ok(web_transport_proto::Capsule::Unknown { typ, payload }) => {
-                    log::warn!("unknown capsule: type={typ} size={}", payload.len());
+                    tracing::warn!("unknown capsule: type={typ} size={}", payload.len());
                 }
                 Err(_) => {
                     self.close(500, "capsule error");
@@ -127,10 +126,10 @@ impl Connection {
     /// This will only work with a brand new QUIC connection using the HTTP/3 ALPN.
     pub async fn connect(conn: ez::Connection, url: Url) -> Result<Connection, ClientError> {
         // Perform the H3 handshake by sending/reciving SETTINGS frames.
-        let settings = Settings::connect(&conn).await?;
+        let settings = h3::Settings::connect(&conn).await?;
 
         // Send the HTTP/3 CONNECT request.
-        let connect = Connect::open(&conn, url).await?;
+        let connect = h3::Connect::open(&conn, url).await?;
 
         // Return the resulting session with a reference to the control/connect streams.
         // If either stream is closed, then the session will be closed, so we need to keep them around.
@@ -419,7 +418,7 @@ impl SessionAccept {
                 }
                 _ => {
                     // ignore unknown streams
-                    log::debug!("ignoring unknown unidirectional stream: {typ:?}");
+                    tracing::debug!("ignoring unknown unidirectional stream: {typ:?}");
                 }
             }
         }
@@ -492,7 +491,7 @@ impl SessionAccept {
             .await
             .map_err(|_| SessionError::Unknown)?;
         if Frame(typ) != Frame::WEBTRANSPORT {
-            log::debug!("ignoring unknown bidirectional stream: {typ:?}");
+            tracing::debug!("ignoring unknown bidirectional stream: {typ:?}");
             return Ok(None);
         }
 

@@ -1,10 +1,9 @@
 use std::sync::Arc;
-use tokio_quiche::settings::QuicSettings;
 use url::Url;
 
 use crate::{
     ez::{self, CertificatePath, DefaultMetrics, Metrics},
-    ConnectError, Connection, SettingsError,
+    h3, Connection, Settings,
 };
 
 #[derive(thiserror::Error, Debug, Clone)]
@@ -13,10 +12,10 @@ pub enum ClientError {
     Io(Arc<std::io::Error>),
 
     #[error("settings error: {0}")]
-    Settings(#[from] SettingsError),
+    Settings(#[from] h3::SettingsError),
 
     #[error("connect error: {0}")]
-    Connect(#[from] ConnectError),
+    Connect(#[from] h3::ConnectError),
 }
 
 impl From<std::io::Error> for ClientError {
@@ -59,7 +58,7 @@ impl<M: Metrics> ClientBuilder<M> {
     ///
     /// WARNING: [QuicSettings::verify_peer] is set to false by default.
     /// This will completely bypass certificate verification and is generally not recommended.
-    pub fn with_settings(self, settings: QuicSettings) -> Self {
+    pub fn with_settings(self, settings: Settings) -> Self {
         Self(self.0.with_settings(settings))
     }
 

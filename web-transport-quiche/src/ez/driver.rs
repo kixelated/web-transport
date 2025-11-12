@@ -93,7 +93,6 @@ impl Driver {
     fn read(&mut self, qconn: &mut QuicheConnection) -> Result<(), ConnectionError> {
         while let Some(stream_id) = qconn.stream_readable_next() {
             let stream_id = StreamId::from(stream_id);
-            println!("stream is readable: {:?}", stream_id);
 
             if let Some(entry) = self.recv.get_mut(&stream_id) {
                 // Wake after dropping the lock to avoid deadlock
@@ -104,8 +103,6 @@ impl Driver {
 
                 continue;
             }
-
-            println!("stream is new: {:?}", stream_id);
 
             let mut state = RecvState::new(stream_id);
             state.flush(qconn)?; // no waker will be returned
@@ -139,8 +136,6 @@ impl Driver {
         while let Some(stream_id) = qconn.stream_writable_next() {
             let stream_id = StreamId::from(stream_id);
 
-            println!("stream is writable: {:?}", stream_id);
-
             if let Some(state) = self.send.get_mut(&stream_id) {
                 let waker = state.lock().flush(qconn)?;
                 if let Some(waker) = waker {
@@ -163,24 +158,29 @@ impl Driver {
         waker: &Waker,
         qconn: &mut QuicheConnection,
     ) -> Poll<Result<(), ConnectionError>> {
-        println!("poll");
-
         if !qconn.is_draining() {
             // Check if the application wants to close the connection.
             if let Poll::Ready(err) = self.closed_local.poll(waker) {
-                match err {
-                    ConnectionError::Local(code, reason) => {
-                        qconn.close(true, code, reason.as_bytes())
+                // Close the connection and return the error.
+                return Poll::Ready(
+                    match err {
+                        ConnectionError::Local(code, reason) => {
+                            qconn.close(true, code, reason.as_bytes())
+                        }
+                        ConnectionError::Dropped => qconn.close(true, 0, b"dropped"),
+                        ConnectionError::Remote(code, reason) => {
+                            // This shouldn't happen, but just echo it back in case.
+                            qconn.close(true, code, reason.as_bytes())
+                        }
+                        ConnectionError::Quiche(e) => {
+                            qconn.close(true, 500, e.to_string().as_bytes())
+                        }
+                        ConnectionError::Unknown(reason) => {
+                            qconn.close(true, 501, reason.as_bytes())
+                        }
                     }
-                    ConnectionError::Dropped => qconn.close(true, 0, b"dropped"),
-                    ConnectionError::Remote(code, reason) => {
-                        // This shouldn't happen, but just echo it back in case.
-                        qconn.close(true, code, reason.as_bytes())
-                    }
-                    ConnectionError::Quiche(e) => qconn.close(true, 500, e.to_string().as_bytes()),
-                    ConnectionError::Unknown(reason) => qconn.close(true, 501, reason.as_bytes()),
-                }
-                .ok();
+                    .map_err(ConnectionError::Quiche),
+                );
             }
         }
 
@@ -188,6 +188,9 @@ impl Driver {
         if !qconn.is_established() {
             return Poll::Pending;
         }
+
+        // Decide if we should poll or return to iterate the IO loop.
+        let mut wait = true;
 
         // We're allowed to process recv messages when the connection is draining.
         {
@@ -203,20 +206,23 @@ impl Driver {
 
             for stream_id in streams {
                 if let Some(stream) = self.recv.get_mut(&stream_id) {
-                    println!("wakeup for recv {:?}", stream_id);
                     let waker = stream.lock().flush(qconn)?;
                     if let Some(waker) = waker {
                         waker.wake();
                     }
-                } else {
-                    println!("wakeup for dropped recv stream");
+
+                    wait = false;
                 }
             }
         }
 
         // Don't try to send/open during the draining or closed state.
         if qconn.is_draining() || qconn.is_closed() {
-            return Poll::Pending;
+            if wait {
+                return Poll::Pending;
+            } else {
+                return Poll::Ready(Ok(()));
+            }
         }
 
         {
@@ -230,13 +236,12 @@ impl Driver {
 
             for stream_id in streams {
                 if let Some(stream) = self.send.get_mut(&stream_id) {
-                    println!("wakeup for send {:?}", stream_id);
                     let waker = stream.lock().flush(qconn)?;
                     if let Some(waker) = waker {
                         waker.wake();
                     }
-                } else {
-                    println!("wakeup for dropped send stream");
+
+                    wait = false;
                 }
             }
         }
@@ -244,6 +249,7 @@ impl Driver {
         while qconn.peer_streams_left_bidi() > 0 {
             if let Ok((send, recv)) = self.open_bi.try_recv() {
                 self.open_bi(qconn, send, recv)?;
+                wait = false;
             } else {
                 break;
             }
@@ -252,12 +258,17 @@ impl Driver {
         while qconn.peer_streams_left_uni() > 0 {
             if let Ok(recv) = self.open_uni.try_recv() {
                 self.open_uni(qconn, recv)?;
+                wait = false;
             } else {
                 break;
             }
         }
 
-        Poll::Pending
+        if wait {
+            Poll::Pending
+        } else {
+            Poll::Ready(Ok(()))
+        }
     }
 
     fn open_bi(
@@ -269,7 +280,6 @@ impl Driver {
         let id = {
             let mut state = send.lock();
             let id = state.id();
-            println!("opening send bi: {:?}", id);
             qconn.stream_send(id.into(), &[], false)?;
             let waker = state.flush(qconn)?;
             drop(state);
@@ -288,7 +298,6 @@ impl Driver {
             if let Some(waker) = waker {
                 waker.wake();
             }
-            println!("opening recv bi: {:?}", id);
             id
         };
         self.recv.insert(id, recv);
@@ -304,7 +313,6 @@ impl Driver {
         let id = {
             let mut state = send.lock();
             let id = state.id();
-            println!("opening send uni: {:?}", id);
             qconn.stream_send(id.into(), &[], false)?;
             let waker = state.flush(qconn)?;
             drop(state);
@@ -332,8 +340,6 @@ impl tokio_quiche::ApplicationOverQuic for Driver {
         qconn: &mut QuicheConnection,
         handshake_info: &tokio_quiche::quic::HandshakeInfo,
     ) -> tokio_quiche::QuicResult<()> {
-        println!("on_conn_established");
-
         if let Err(e) = self.connected(qconn, handshake_info) {
             self.abort(e);
         }
@@ -364,8 +370,6 @@ impl tokio_quiche::ApplicationOverQuic for Driver {
     }
 
     fn process_reads(&mut self, qconn: &mut QuicheConnection) -> tokio_quiche::QuicResult<()> {
-        println!("process_reads");
-
         if let Err(e) = self.read(qconn) {
             self.abort(e);
         }
@@ -374,8 +378,6 @@ impl tokio_quiche::ApplicationOverQuic for Driver {
     }
 
     fn process_writes(&mut self, qconn: &mut QuicheConnection) -> tokio_quiche::QuicResult<()> {
-        println!("process_writes");
-
         if let Err(e) = self.write(qconn) {
             self.abort(e);
         }

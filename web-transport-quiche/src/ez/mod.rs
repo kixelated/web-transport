@@ -18,4 +18,6 @@ pub(crate) use lock::*;
 pub(crate) use stream::*;
 
 pub use tokio_quiche::metrics::{DefaultMetrics, Metrics};
-pub use tokio_quiche::settings::{CertificateKind, TlsCertificatePaths as CertificatePath};
+pub use tokio_quiche::settings::{
+    CertificateKind, QuicSettings as Settings, TlsCertificatePaths as CertificatePath,
+};

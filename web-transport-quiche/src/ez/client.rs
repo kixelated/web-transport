@@ -1,14 +1,14 @@
 use std::io;
 use std::sync::Arc;
-use tokio_quiche::settings::{Hooks, QuicSettings, TlsCertificatePaths};
+use tokio_quiche::settings::{Hooks, TlsCertificatePaths};
 
 use super::{
     CertificateKind, CertificatePath, Connection, ConnectionClosed, DefaultMetrics, Driver,
-    DriverWakeup, Lock, Metrics,
+    DriverWakeup, Lock, Metrics, Settings,
 };
 
 pub struct ClientBuilder<M: Metrics = DefaultMetrics> {
-    settings: QuicSettings,
+    settings: Settings,
     socket: Option<tokio::net::UdpSocket>,
     tls: Option<(String, String, CertificateKind)>,
     metrics: M,
@@ -22,7 +22,7 @@ impl Default for ClientBuilder<DefaultMetrics> {
 
 impl<M: Metrics> ClientBuilder<M> {
     pub fn with_metrics(m: M) -> Self {
-        let mut settings = QuicSettings::default();
+        let mut settings = Settings::default();
         settings.verify_peer = true;
 
         Self {
@@ -63,7 +63,7 @@ impl<M: Metrics> ClientBuilder<M> {
     ///
     /// WARNING: [QuicSettings::verify_peer] is set to false by default.
     /// This will completely bypass certificate verification and is generally not recommended.
-    pub fn with_settings(mut self, settings: QuicSettings) -> Self {
+    pub fn with_settings(mut self, settings: Settings) -> Self {
         self.settings = settings;
         self
     }
@@ -126,6 +126,10 @@ impl<M: Metrics> ClientBuilder<M> {
                 private_key: private_key.as_str(),
                 kind: kind.clone(),
             });
+
+        if !self.settings.verify_peer {
+            tracing::warn!("TLS certificate verification is disabled, a MITM attack is possible");
+        }
 
         let params =
             tokio_quiche::ConnectionParams::new_client(self.settings, tls, Hooks::default());

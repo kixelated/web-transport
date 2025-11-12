@@ -23,8 +23,12 @@ struct Args {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     // Enable info logging.
-    let env = env_logger::Env::default().default_filter_or("info");
-    env_logger::init_from_env(env);
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+        )
+        .init();
 
     let args = Args::parse();
 
@@ -40,52 +44,50 @@ async fn main() -> anyhow::Result<()> {
         kind: web_transport_quiche::ez::CertificateKind::X509,
     };
 
-    let server = web_transport_quiche::ez::ServerBuilder::default()
+    let mut server = web_transport_quiche::ServerBuilder::default()
         .with_bind(args.bind)?
         .with_cert(tls)?;
 
-    let mut server = web_transport_quiche::Server::new(server);
-
-    log::info!("listening on {}", args.bind);
+    tracing::info!("listening on {}", args.bind);
 
     // Accept new connections.
     while let Some(conn) = server.accept().await {
-        log::info!("accepted connection, url={}", conn.url());
+        tracing::info!("accepted connection, url={}", conn.url());
 
         tokio::spawn(async move {
             match run_conn(conn).await {
-                Ok(()) => log::info!("connection closed"),
-                Err(err) => log::error!("connection closed: {err}"),
+                Ok(()) => tracing::info!("connection closed"),
+                Err(err) => tracing::error!("connection closed: {err}"),
             }
         });
     }
 
-    log::info!("server closed");
+    tracing::info!("server closed");
 
     Ok(())
 }
 
-async fn run_conn(request: web_transport_quiche::Request) -> anyhow::Result<()> {
-    log::info!("received WebTransport request: {}", request.url());
+async fn run_conn(request: web_transport_quiche::h3::Request) -> anyhow::Result<()> {
+    tracing::info!("received WebTransport request: {}", request.url());
 
     // Accept the session.
     let session = request.ok().await.context("failed to accept session")?;
-    log::info!("accepted session");
+    tracing::info!("accepted session");
 
     loop {
         let (mut send, mut recv) = session.accept_bi().await?;
 
         // Wait for a bidirectional stream or datagram (TODO).
-        log::info!("accepted stream");
+        tracing::info!("accepted stream");
 
         // Read the message and echo it back.
         let mut msg: Bytes = recv.read_all().await?;
-        log::info!("recv: {}", String::from_utf8_lossy(&msg));
+        tracing::info!("recv: {}", String::from_utf8_lossy(&msg));
 
-        log::info!("send: {}", String::from_utf8_lossy(&msg));
+        tracing::info!("send: {}", String::from_utf8_lossy(&msg));
         send.write_buf_all(&mut msg).await?;
         send.finish()?;
 
-        log::info!("echo successful!");
+        tracing::info!("echo successful!");
     }
 }

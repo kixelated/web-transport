@@ -50,7 +50,7 @@ impl RecvStream {
 impl Drop for RecvStream {
     fn drop(&mut self) {
         if !self.inner.is_closed() {
-            log::warn!("stream dropped without `close` or `finish`");
+            tracing::warn!("stream dropped without `close` or `finish`");
             self.inner.close(DROP_CODE)
         }
     }

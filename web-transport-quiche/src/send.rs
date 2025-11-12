@@ -61,7 +61,7 @@ impl Drop for SendStream {
     fn drop(&mut self) {
         // Reset the stream if we dropped without calling `close` or `finish`
         if !self.inner.is_closed() {
-            log::warn!("stream dropped without `close` or `finish`");
+            tracing::warn!("stream dropped without `close` or `finish`");
             self.inner.close(DROP_CODE)
         }
     }

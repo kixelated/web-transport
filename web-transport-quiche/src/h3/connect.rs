@@ -41,7 +41,7 @@ impl Connect {
         let (send, mut recv) = conn.accept_bi().await?;
 
         let request = web_transport_proto::ConnectRequest::read(&mut recv).await?;
-        log::debug!("received CONNECT request: {request:?}");
+        tracing::debug!("received CONNECT request: {request:?}");
 
         // The request was successfully decoded, so we can send a response.
         Ok(Self {
@@ -55,7 +55,7 @@ impl Connect {
     pub async fn respond(&mut self, status: http::StatusCode) -> Result<(), ConnectError> {
         let resp = ConnectResponse { status };
 
-        log::debug!("sending CONNECT response: {resp:?}");
+        tracing::debug!("sending CONNECT response: {resp:?}");
 
         let mut buf = Vec::new();
         resp.encode(&mut buf);
@@ -72,11 +72,11 @@ impl Connect {
         // Create a new CONNECT request that we'll send using HTTP/3
         let request = ConnectRequest { url };
 
-        log::debug!("sending CONNECT request: {request:?}");
+        tracing::debug!("sending CONNECT request: {request:?}");
         request.write(&mut send).await?;
 
         let response = web_transport_proto::ConnectResponse::read(&mut recv).await?;
-        log::debug!("received CONNECT response: {response:?}");
+        tracing::debug!("received CONNECT response: {response:?}");
 
         // Throw an error if we didn't get a 200 OK.
         if response.status != http::StatusCode::OK {
@@ -100,7 +100,7 @@ impl Connect {
         &self.request.url
     }
 
-    pub(super) fn into_inner(self) -> (ez::SendStream, ez::RecvStream) {
+    pub(crate) fn into_inner(self) -> (ez::SendStream, ez::RecvStream) {
         (self.send, self.recv)
     }
 }

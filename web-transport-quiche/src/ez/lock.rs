@@ -28,17 +28,21 @@ impl<T> Lock<T> {
     }
 
     pub fn lock(&self) -> LockGuard<'_, T> {
+        /*
         println!(
-            "LOCK: acquiring {} @ {:?}",
+            "locking {} on thread {:?}",
             self.name,
             std::thread::current().id()
         );
+        */
         let guard = self.inner.lock().unwrap();
+        /*
         println!(
-            "LOCK: acquired {} @ {:?}",
+            "locked {} on thread {:?}",
             self.name,
             std::thread::current().id()
         );
+        */
         LockGuard {
             guard,
             name: self.name,
@@ -53,11 +57,13 @@ pub(crate) struct LockGuard<'a, T> {
 
 impl<'a, T> Drop for LockGuard<'a, T> {
     fn drop(&mut self) {
+        /*
         println!(
-            "LOCK: dropping {} @ {:?}",
+            "unlocking {} on thread {:?}",
             self.name,
             std::thread::current().id()
         );
+        */
     }
 }
 

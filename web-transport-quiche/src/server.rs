@@ -1,11 +1,10 @@
+use std::io;
 use std::sync::Arc;
 
-use super::{Connect, ConnectError, Settings, SettingsError};
 use futures::StreamExt;
 use futures::{future::BoxFuture, stream::FuturesUnordered};
-use url::Url;
 
-use crate::{ez, Connection};
+use crate::{ez, h3};
 
 #[derive(thiserror::Error, Debug, Clone)]
 pub enum ServerError {
@@ -13,10 +12,10 @@ pub enum ServerError {
     Io(Arc<std::io::Error>),
 
     #[error("settings error: {0}")]
-    Settings(#[from] SettingsError),
+    Settings(#[from] h3::SettingsError),
 
     #[error("connect error: {0}")]
-    Connect(#[from] ConnectError),
+    Connect(#[from] h3::ConnectError),
 }
 
 impl From<std::io::Error> for ServerError {
@@ -25,16 +24,85 @@ impl From<std::io::Error> for ServerError {
     }
 }
 
-pub struct Server {
-    inner: ez::Server,
-    accept: FuturesUnordered<BoxFuture<'static, Result<Request, ServerError>>>,
+pub struct ServerBuilder<M: ez::Metrics = ez::DefaultMetrics, S = ez::ServerInit>(
+    ez::ServerBuilder<M, S>,
+);
+
+impl Default for ServerBuilder<ez::DefaultMetrics> {
+    fn default() -> Self {
+        Self(ez::ServerBuilder::default())
+    }
 }
 
-impl Server {
+impl<M: ez::Metrics> ServerBuilder<M, ez::ServerInit> {
+    pub fn new(m: M) -> Self {
+        Self(ez::ServerBuilder::new(m))
+    }
+
+    pub fn with_listener(
+        self,
+        listener: tokio_quiche::socket::QuicListener,
+    ) -> ServerBuilder<M, ez::ServerWithListener> {
+        ServerBuilder::<M, ez::ServerWithListener>(self.0.with_listener(listener))
+    }
+
+    pub fn with_socket(
+        self,
+        socket: std::net::UdpSocket,
+    ) -> io::Result<ServerBuilder<M, ez::ServerWithListener>> {
+        Ok(ServerBuilder::<M, ez::ServerWithListener>(
+            self.0.with_socket(socket)?,
+        ))
+    }
+
+    pub fn with_bind<A: std::net::ToSocketAddrs>(
+        self,
+        addrs: A,
+    ) -> io::Result<ServerBuilder<M, ez::ServerWithListener>> {
+        Ok(ServerBuilder::<M, ez::ServerWithListener>(
+            self.0.with_bind(addrs)?,
+        ))
+    }
+
+    pub fn with_settings(self, settings: ez::Settings) -> Self {
+        Self(self.0.with_settings(settings))
+    }
+}
+
+impl<M: ez::Metrics> ServerBuilder<M, ez::ServerWithListener> {
+    pub fn with_listener(self, listener: tokio_quiche::socket::QuicListener) -> Self {
+        Self(self.0.with_listener(listener))
+    }
+
+    pub fn with_socket(self, socket: std::net::UdpSocket) -> io::Result<Self> {
+        Ok(Self(self.0.with_socket(socket)?))
+    }
+
+    pub fn with_bind<A: std::net::ToSocketAddrs>(self, addrs: A) -> io::Result<Self> {
+        Ok(Self(self.0.with_bind(addrs)?))
+    }
+
+    pub fn with_settings(self, settings: ez::Settings) -> Self {
+        Self(self.0.with_settings(settings))
+    }
+
+    // TODO add support for in-memory certs
+    // TODO add support for multiple certs
+    pub fn with_cert<'a>(self, tls: ez::CertificatePath<'a>) -> io::Result<Server<M>> {
+        Ok(Server::new(self.0.with_cert(tls)?))
+    }
+}
+
+pub struct Server<M: ez::Metrics = ez::DefaultMetrics> {
+    inner: ez::Server<M>,
+    accept: FuturesUnordered<BoxFuture<'static, Result<h3::Request, ServerError>>>,
+}
+
+impl<M: ez::Metrics> Server<M> {
     /// Wrap an [ez::Server], abstracting away the annoying HTTP/3 handshake required for WebTransport.
     ///
     /// The ALPN must be set to `h3`.
-    pub fn new(inner: ez::Server) -> Self {
+    pub fn new(inner: ez::Server<M>) -> Self {
         Self {
             inner,
             accept: Default::default(),
@@ -42,60 +110,18 @@ impl Server {
     }
 
     /// Accept a new WebTransport session Request from a client.
-    pub async fn accept(&mut self) -> Option<Request> {
+    pub async fn accept(&mut self) -> Option<h3::Request> {
         loop {
             tokio::select! {
-                Some(conn) = self.inner.accept() => self.accept.push(Box::pin(Request::accept(conn))),
+                Some(conn) = self.inner.accept() => self.accept.push(Box::pin(h3::Request::accept(conn))),
                 Some(res) = self.accept.next() => {
                     match res {
                         Ok(session) => return Some(session),
-                        Err(err) => log::warn!("ignoring failed HTTP/3 handshake: {}", err),
+                        Err(err) => tracing::warn!("ignoring failed HTTP/3 handshake: {}", err),
                     }
                 }
                 else => return None,
             }
         }
-    }
-}
-
-/// A mostly complete WebTransport handshake, just awaiting the server's decision on whether to accept or reject the session based on the URL.
-pub struct Request {
-    conn: ez::Connection,
-    settings: Settings,
-    connect: Connect,
-}
-
-impl Request {
-    /// Accept a new WebTransport session from a client.
-    pub async fn accept(conn: ez::Connection) -> Result<Self, ServerError> {
-        // Perform the H3 handshake by sending/reciving SETTINGS frames.
-        let settings = Settings::connect(&conn).await?;
-
-        // Accept the CONNECT request but don't send a response yet.
-        let connect = Connect::accept(&conn).await?;
-
-        // Return the resulting request with a reference to the settings/connect streams.
-        Ok(Self {
-            conn,
-            settings,
-            connect,
-        })
-    }
-
-    /// Returns the URL provided by the client.
-    pub fn url(&self) -> &Url {
-        self.connect.url()
-    }
-
-    /// Accept the session, returning a 200 OK.
-    pub async fn ok(mut self) -> Result<Connection, ServerError> {
-        self.connect.respond(http::StatusCode::OK).await?;
-        Ok(Connection::new(self.conn, self.settings, self.connect))
-    }
-
-    /// Reject the session, returing your favorite HTTP status code.
-    pub async fn close(mut self, status: http::StatusCode) -> Result<(), ServerError> {
-        self.connect.respond(status).await?;
-        Ok(())
     }
 }

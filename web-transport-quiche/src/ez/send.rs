@@ -68,8 +68,6 @@ impl SendState {
         cx: &mut Context<'_>,
         buf: &mut B,
     ) -> Poll<Result<usize, StreamError>> {
-        println!("poll_write_buf: {:?} {:?}", self.id, buf.remaining());
-
         if let Some(reset) = self.reset {
             return Poll::Ready(Err(StreamError::Reset(reset)));
         }
@@ -84,12 +82,10 @@ impl SendState {
 
         if self.capacity == 0 {
             self.blocked = Some(cx.waker().clone());
-            println!("blocking for capacity: {:?}", self.id);
             return Poll::Pending;
         }
 
         let n = self.capacity.min(buf.remaining());
-        println!("writing {:?} bytes: {:?} {:?}", n, self.id, buf.remaining());
 
         // NOTE: Avoids a copy when Buf is Bytes.
         let chunk = buf.copy_to_bytes(n);
@@ -121,24 +117,19 @@ impl SendState {
 
     pub fn flush(&mut self, qconn: &mut QuicheConnection) -> quiche::Result<Option<Waker>> {
         if let Some(reset) = self.reset {
-            println!("shutting down send bi: {:?} {:?}", self.id, reset);
             qconn.stream_shutdown(self.id.into(), quiche::Shutdown::Write, reset)?;
             return Ok(self.blocked.take());
         }
 
         if let Some(_) = self.stop.take() {
-            println!("waking blocked for stop: {:?}", self.id);
             return Ok(self.blocked.take());
         }
 
         if let Some(priority) = self.priority.take() {
-            println!("setting priority: {:?} {:?}", self.id, priority);
             qconn.stream_priority(self.id.into(), priority, true)?;
         }
 
         while let Some(mut chunk) = self.queued.pop_front() {
-            println!("sending chunk: {:?} {:?}", self.id, chunk.len());
-
             let n = match qconn.stream_send(self.id.into(), &chunk, false) {
                 Ok(n) => n,
                 Err(quiche::Error::Done) => 0,
@@ -149,13 +140,9 @@ impl SendState {
                 Err(e) => return Err(e.into()),
             };
 
-            println!("sent chunk: {:?} {:?}", self.id, n);
             self.capacity -= n;
-            println!("capacity after sending: {:?} {:?}", self.id, self.capacity);
 
             if n < chunk.len() {
-                println!("queued remainder: {:?} {:?}", self.id, chunk.len() - n);
-
                 self.queued.push_front(chunk.split_off(n));
 
                 // Register a `stream_writable_next` callback when at least one byte is ready to send.
@@ -166,7 +153,6 @@ impl SendState {
         }
 
         if self.queued.is_empty() && self.fin {
-            println!("sending fin: {:?}", self.id);
             qconn.stream_send(self.id.into(), &[], true)?;
             return Ok(self.blocked.take());
         }
@@ -175,15 +161,12 @@ impl SendState {
             Ok(capacity) => capacity,
             Err(quiche::Error::StreamStopped(code)) => {
                 self.stop = Some(code);
-                println!("waking blocked for stop: {:?}", self.id);
                 return Ok(self.blocked.take());
             }
             Err(e) => return Err(e.into()),
         };
-        println!("setting capacity: {:?} {:?}", self.id, self.capacity);
 
         if self.capacity > 0 {
-            println!("waking blocked for capacity: {:?}", self.id);
             return Ok(self.blocked.take());
         }
 
@@ -221,8 +204,6 @@ impl SendStream {
         cx: &mut Context<'_>,
         buf: &mut B,
     ) -> Poll<Result<usize, StreamError>> {
-        println!("poll_write_buf: {:?} {:?}", self.id, buf.remaining());
-
         if let Poll::Ready(res) = self.state.lock().poll_write_buf(cx, buf) {
             let waker = self.wakeup.lock().waker(self.id);
             if let Some(waker) = waker {
