@@ -6,6 +6,7 @@ use futures::{future::BoxFuture, stream::FuturesUnordered};
 
 use crate::{ez, h3};
 
+/// An error returned when receiving a new WebTransport session.
 #[derive(thiserror::Error, Debug, Clone)]
 pub enum ServerError {
     #[error("io error: {0}")]
@@ -24,6 +25,7 @@ impl From<std::io::Error> for ServerError {
     }
 }
 
+/// Construct a WebTransport server using sane defaults.
 pub struct ServerBuilder<M: ez::Metrics = ez::DefaultMetrics, S = ez::ServerInit>(
     ez::ServerBuilder<M, S>,
 );
@@ -34,11 +36,17 @@ impl Default for ServerBuilder<ez::DefaultMetrics> {
     }
 }
 
-impl<M: ez::Metrics> ServerBuilder<M, ez::ServerInit> {
-    pub fn new(m: M) -> Self {
-        Self(ez::ServerBuilder::new(m))
+impl ServerBuilder<ez::DefaultMetrics, ez::ServerInit> {
+    /// Create a new server builder with custom metrics.
+    ///
+    /// Use [ServerBuilder::default] if you don't care about metrics.
+    pub fn with_metrics<M: ez::Metrics>(m: M) -> ServerBuilder<M, ez::ServerInit> {
+        ServerBuilder(ez::ServerBuilder::with_metrics(m))
     }
+}
 
+impl<M: ez::Metrics> ServerBuilder<M, ez::ServerInit> {
+    /// Configure the server to use the provided QUIC listener.
     pub fn with_listener(
         self,
         listener: tokio_quiche::socket::QuicListener,
@@ -46,6 +54,7 @@ impl<M: ez::Metrics> ServerBuilder<M, ez::ServerInit> {
         ServerBuilder::<M, ez::ServerWithListener>(self.0.with_listener(listener))
     }
 
+    /// Listen for incoming packets on the given socket.
     pub fn with_socket(
         self,
         socket: std::net::UdpSocket,
@@ -55,6 +64,7 @@ impl<M: ez::Metrics> ServerBuilder<M, ez::ServerInit> {
         ))
     }
 
+    /// Listen for incoming packets on the given address.
     pub fn with_bind<A: std::net::ToSocketAddrs>(
         self,
         addrs: A,
@@ -64,44 +74,49 @@ impl<M: ez::Metrics> ServerBuilder<M, ez::ServerInit> {
         ))
     }
 
+    /// Use the provided [Settings] instead of the defaults.
     pub fn with_settings(self, settings: ez::Settings) -> Self {
         Self(self.0.with_settings(settings))
     }
 }
 
 impl<M: ez::Metrics> ServerBuilder<M, ez::ServerWithListener> {
+    /// Configure the server to use the provided QUIC listener.
     pub fn with_listener(self, listener: tokio_quiche::socket::QuicListener) -> Self {
         Self(self.0.with_listener(listener))
     }
 
+    /// Listen for incoming packets on the given socket.
     pub fn with_socket(self, socket: std::net::UdpSocket) -> io::Result<Self> {
         Ok(Self(self.0.with_socket(socket)?))
     }
 
+    /// Listen for incoming packets on the given address.
     pub fn with_bind<A: std::net::ToSocketAddrs>(self, addrs: A) -> io::Result<Self> {
         Ok(Self(self.0.with_bind(addrs)?))
     }
 
+    /// Use the provided [Settings] instead of the defaults.
     pub fn with_settings(self, settings: ez::Settings) -> Self {
         Self(self.0.with_settings(settings))
     }
 
-    // TODO add support for in-memory certs
-    // TODO add support for multiple certs
+    /// Configure the server to use the specified certificate for TLS.
     pub fn with_cert<'a>(self, tls: ez::CertificatePath<'a>) -> io::Result<Server<M>> {
         Ok(Server::new(self.0.with_cert(tls)?))
     }
 }
 
+/// A WebTransport server that accepts new sessions.
 pub struct Server<M: ez::Metrics = ez::DefaultMetrics> {
     inner: ez::Server<M>,
     accept: FuturesUnordered<BoxFuture<'static, Result<h3::Request, ServerError>>>,
 }
 
 impl<M: ez::Metrics> Server<M> {
-    /// Wrap an [ez::Server], abstracting away the annoying HTTP/3 handshake required for WebTransport.
+    /// Wrap an underlying QUIC server, abstracting away the HTTP/3 handshake required for WebTransport.
     ///
-    /// The ALPN must be set to `h3`.
+    /// **Note**: The ALPN must be set to `h3`.
     pub fn new(inner: ez::Server<M>) -> Self {
         Self {
             inner,
@@ -109,7 +124,9 @@ impl<M: ez::Metrics> Server<M> {
         }
     }
 
-    /// Accept a new WebTransport session Request from a client.
+    /// Accept a new WebTransport session [h3::Request] from a client.
+    ///
+    /// Returns [h3::Request] which allows the server to inspect the URL and decide whether to accept or reject the session.
     pub async fn accept(&mut self) -> Option<h3::Request> {
         loop {
             tokio::select! {

@@ -206,6 +206,7 @@ impl SendState {
     }
 }
 
+/// A stream that can be used to send bytes.
 pub struct SendStream {
     id: StreamId,
     state: Lock<SendState>,
@@ -217,16 +218,19 @@ impl SendStream {
         Self { id, state, driver }
     }
 
+    /// Returns the QUIC stream ID.
     pub fn id(&self) -> StreamId {
         self.id
     }
 
+    /// Write some data to the stream, returning the size written.
     pub async fn write(&mut self, buf: &[u8]) -> Result<usize, StreamError> {
         let mut buf = io::Cursor::new(buf);
         poll_fn(|cx| self.poll_write_buf(cx, &mut buf)).await
     }
 
     // Write some of the buffer to the stream, advancing the internal position.
+    //
     // Returns the number of bytes written for convenience.
     fn poll_write_buf<B: Buf>(
         &mut self,
@@ -274,11 +278,10 @@ impl SendStream {
         Ok(())
     }
 
-    /// Mark the stream as finished.
+    /// Mark the stream as finished, such that no more data can be written.
     ///
-    /// Returns an error if the stream is already closed.
-    ///
-    /// NOTE: `is_closed` won't be true until the FIN has been sent.
+    /// **WARN**: If this is not called explicitly, [SendStream::close] will be called on [Drop].
+    /// **NOTE**: [SendStream::closed] will block until the FIN has been sent.
     pub fn finish(&mut self) -> Result<(), StreamError> {
         {
             let mut state = self.state.lock();
@@ -301,12 +304,14 @@ impl SendStream {
         Ok(())
     }
 
-    /// Returns true if `finish` has been called, or if the stream has been closed by the peer.
+    /// Returns true if [SendStream::finish] has been called, or if the stream has been closed by the peer.
     pub fn is_finished(&self) -> Result<bool, StreamError> {
         self.state.lock().is_finished()
     }
 
-    /// Immediately close the stream via a RESET_STREAM.
+    /// Abruptly reset the stream with the provided error code.
+    ///
+    /// This sends a RESET_STREAM frame to the remote.
     pub fn close(&mut self, code: u64) {
         self.state.lock().reset = Some(code);
 
@@ -319,9 +324,9 @@ impl SendStream {
     /// Returns true if the stream is closed by either side.
     ///
     /// This includes:
-    /// - We sent a RESET_STREAM via [Self::close]
+    /// - We sent a RESET_STREAM via [SendStream::close]
     /// - We received a STOP_SENDING via [RecvStream::close]
-    /// - We sent a FIN via [Self::finish]
+    /// - We sent a FIN via [SendStream::finish]
     pub fn is_closed(&self) -> bool {
         self.state.lock().is_closed()
     }
@@ -338,19 +343,21 @@ impl SendStream {
         Poll::Pending
     }
 
-    /// Block until the stream is closed by either side.
+    /// Wait until the stream is closed by either side.
     ///
     /// This includes:
-    /// - We sent a RESET_STREAM via [Self::close]
+    /// - We sent a RESET_STREAM via [SendStream::close]
     /// - We received a STOP_SENDING via [RecvStream::close]
-    /// - We sent a FIN via [Self::finish]
+    /// - We sent a FIN via [SendStream::finish]
     ///
-    /// NOTE: This takes &mut to match quiche and to simplify the implementation.
-    /// TODO: This should block until the FIN has been acknowledged, not just sent.
+    /// Note: This takes `&mut` to match quiche and to simplify the implementation.
     pub async fn closed(&mut self) -> Result<(), StreamError> {
         poll_fn(|cx| self.poll_closed(cx.waker())).await
     }
 
+    /// Set the priority of this stream.
+    ///
+    /// Lower priority values are sent first. Defaults to 0.
     pub fn set_priority(&mut self, priority: u8) {
         self.state.lock().priority = Some(priority);
 
@@ -396,8 +403,16 @@ impl AsyncWrite for SendStream {
         Poll::Ready(Ok(()))
     }
 
-    fn poll_shutdown(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Result<(), io::Error>> {
-        // We purposely don't implement this; use finish() instead because it takes self.
-        Poll::Ready(Ok(()))
+    fn poll_shutdown(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Result<(), io::Error>> {
+        match self.finish() {
+            Ok(()) => match self.poll_closed(cx.waker()) {
+                Poll::Ready(res) => Poll::Ready(res.map_err(|e| io::Error::other(e.to_string()))),
+                Poll::Pending => Poll::Pending,
+            },
+            Err(e) => Poll::Ready(Err(io::Error::other(e.to_string()))),
+        }
     }
 }

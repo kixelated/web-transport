@@ -211,6 +211,7 @@ impl RecvState {
     }
 }
 
+/// A stream that can be used to receive bytes.
 pub struct RecvStream {
     id: StreamId,
     state: Lock<RecvState>,
@@ -222,10 +223,14 @@ impl RecvStream {
         Self { id, state, driver }
     }
 
+    /// Returns the QUIC stream ID.
     pub fn id(&self) -> StreamId {
         self.id
     }
 
+    /// Read some data into the buffer and return the amount read.
+    ///
+    /// Returns [None] if the stream has been finished by the remote.
     pub async fn read(&mut self, buf: &mut [u8]) -> Result<Option<usize>, StreamError> {
         Ok(self.read_chunk(buf.len()).await?.map(|chunk| {
             buf[..chunk.len()].copy_from_slice(&chunk);
@@ -233,6 +238,9 @@ impl RecvStream {
         }))
     }
 
+    /// Read a chunk of data from the stream, avoiding a copy.
+    ///
+    /// Returns [None] if the stream has been finished by the remote.
     pub async fn read_chunk(&mut self, max: usize) -> Result<Option<Bytes>, StreamError> {
         poll_fn(|cx| self.poll_read_chunk(cx.waker(), max)).await
     }
@@ -262,6 +270,10 @@ impl RecvStream {
         Poll::Pending
     }
 
+    /// Read data into a mutable buffer and return the amount read.
+    ///
+    /// The buffer will be advanced by the number of bytes read.
+    /// Returns [None] if the stream has been finished by the remote.
     pub async fn read_buf<B: BufMut>(&mut self, buf: &mut B) -> Result<Option<usize>, StreamError> {
         match self
             .read(unsafe {
@@ -277,6 +289,7 @@ impl RecvStream {
         }
     }
 
+    /// Read until the end of the stream (or the limit is hit).
     pub async fn read_all(&mut self, max: usize) -> Result<Bytes, StreamError> {
         let buf = BytesMut::new();
         let mut limit = buf.limit(max);
@@ -284,7 +297,9 @@ impl RecvStream {
         Ok(limit.into_inner().freeze())
     }
 
-    // Reset the stream with the given error code.
+    /// Tell the other end to stop sending data with the given error code.
+    ///
+    /// This sends a STOP_SENDING frame to the remote.
     pub fn close(&mut self, code: u64) {
         self.state.lock().stop = Some(code);
 
@@ -297,9 +312,9 @@ impl RecvStream {
     /// Returns true if the stream is closed by either side.
     ///
     /// This includes:
-    /// - We sent a STOP_SENDING via [Self::close]
-    /// - We received a RESET_STREAM via [RecvStream::close]
-    /// - We received a FIN via [SendStream::finish]
+    /// - We sent a STOP_SENDING via [RecvStream::close]
+    /// - We received a RESET_STREAM from the remote
+    /// - We received a FIN from the remote
     pub fn is_closed(&self) -> bool {
         self.state.lock().is_closed()
     }
@@ -316,14 +331,14 @@ impl RecvStream {
         Poll::Pending
     }
 
-    /// Block until the stream is closed by either side.
+    /// Wait until the stream is closed by either side.
     ///
     /// This includes:
-    /// - We sent a RESET_STREAM via [Self::close]
-    /// - We received a STOP_SENDING via [SendStream::close]
-    /// - We received a FIN via [SendStream::finish]
+    /// - We sent a STOP_SENDING via [RecvStream::close]
+    /// - We received a RESET_STREAM from the remote
+    /// - We received a FIN from the remote
     ///
-    /// NOTE: This takes &mut to match quiche and to simplify the implementation.
+    /// **NOTE**: This takes `&mut` to match quiche and slightly simplify the implementation.
     pub async fn closed(&mut self) -> Result<(), StreamError> {
         poll_fn(|cx| self.poll_closed(cx.waker())).await
     }

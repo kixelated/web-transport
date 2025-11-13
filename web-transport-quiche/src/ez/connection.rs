@@ -12,7 +12,7 @@ use crate::ez::DriverState;
 
 use super::{Lock, RecvStream, SendStream};
 
-/// An errors returned by [`Session`], split based on if they are underlying QUIC errors or WebTransport errors.
+/// An errors returned by [Connection].
 #[derive(Clone, Error, Debug)]
 pub enum ConnectionError {
     #[error("quiche error: {0}")]
@@ -105,6 +105,11 @@ impl Drop for ConnectionClose {
     }
 }
 
+/// A QUIC connection that can create and accept streams.
+///
+/// This is a handle to an established QUIC connection. It can be cloned to create
+/// multiple handles to the same connection. The connection will be closed when all
+/// handles are dropped.
 #[derive(Clone)]
 pub struct Connection {
     inner: Arc<tokio_quiche::QuicConnection>,
@@ -137,7 +142,7 @@ impl Connection {
         }
     }
 
-    /// Returns the next bidirectional stream created by the peer.
+    /// Accept a bidirectional stream created by the remote peer.
     pub async fn accept_bi(&self) -> Result<(SendStream, RecvStream), ConnectionError> {
         tokio::select! {
             Ok(res) = self.accept_bi.recv_async() => Ok(res),
@@ -145,7 +150,7 @@ impl Connection {
         }
     }
 
-    /// Returns the next unidirectional stream, if any.
+    /// Accept a unidirectional stream created by the remote peer.
     pub async fn accept_uni(&self) -> Result<RecvStream, ConnectionError> {
         tokio::select! {
             Ok(res) = self.accept_uni.recv_async() => Ok(res),
@@ -153,7 +158,9 @@ impl Connection {
         }
     }
 
-    /// Create a new bidirectional stream when the peer allows it.
+    /// Open a new bidirectional stream.
+    ///
+    /// May block while there are too many concurrent streams.
     pub async fn open_bi(&self) -> Result<(SendStream, RecvStream), ConnectionError> {
         let (wakeup, id, send, recv) = poll_fn(|cx| self.driver.lock().open_bi(cx.waker())).await?;
         if let Some(wakeup) = wakeup {
@@ -166,7 +173,9 @@ impl Connection {
         Ok((send, recv))
     }
 
-    /// Create a new unidirectional stream when the peer allows it.
+    /// Open a new unidirectional stream.
+    ///
+    /// May block while there are too many concurrent streams.
     pub async fn open_uni(&self) -> Result<SendStream, ConnectionError> {
         let (wakeup, id, send) = poll_fn(|cx| self.driver.lock().open_uni(cx.waker())).await?;
         if let Some(wakeup) = wakeup {
@@ -177,26 +186,23 @@ impl Connection {
         Ok(send)
     }
 
-    /// Closes the connection, returning an error if the connection was already closed.
+    /// Immediately close the connection with an error code and reason.
     ///
-    /// You should wait until [Self::closed] returns if you wait to ensure the CONNECTION_CLOSED is received.
+    /// **NOTE**: You should wait until [Connection::closed] returns to ensure the CONNECTION_CLOSE frame is sent.
     /// Otherwise, the close may be lost and the peer will have to wait for a timeout.
     pub fn close(&self, code: u64, reason: &str) {
         self.close
             .close(ConnectionError::Local(code, reason.to_string()));
     }
 
-    /// Blocks until the connection is closed by the peer.
-    ///
-    /// If [Self::close] is called, this will block until the peer acknowledges the close.
-    /// This is recommended to avoid tearing down the connection too early.
+    /// Wait until the connection is closed (or acknowledged) by the remote, returning the error.
     pub async fn closed(&self) -> ConnectionError {
         self.close.wait().await
     }
 
     /// Returns true if the connection is closed by either side.
     ///
-    /// NOTE: This includes local closures, unlike [Self::closed].
+    /// **NOTE**: This includes local closures, unlike [Connection::closed].
     pub fn is_closed(&self) -> bool {
         self.close.is_closed()
     }

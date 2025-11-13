@@ -4,6 +4,7 @@ use thiserror::Error;
 
 use crate::ez;
 
+/// An error returned when exchanging HTTP/3 SETTINGS frames.
 #[derive(Error, Debug, Clone)]
 pub enum SettingsError {
     #[error("quic stream was closed early")]
@@ -22,6 +23,7 @@ pub enum SettingsError {
     Stream(#[from] ez::StreamError),
 }
 
+/// HTTP/3 SETTINGS frame exchange for WebTransport support negotiation.
 pub struct Settings {
     // A reference to the send/recv stream, so we don't close it until dropped.
     #[allow(dead_code)]
@@ -32,7 +34,9 @@ pub struct Settings {
 }
 
 impl Settings {
-    // Establish the H3 connection.
+    /// Exchange HTTP/3 SETTINGS frames to negotiate WebTransport support.
+    ///
+    /// This sends and receives SETTINGS frames to ensure both sides support WebTransport.
     pub async fn connect(conn: &ez::Connection) -> Result<Self, SettingsError> {
         let recv = Self::accept(conn);
         let send = Self::open(conn);

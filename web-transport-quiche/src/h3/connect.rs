@@ -5,6 +5,7 @@ use url::Url;
 
 use crate::ez;
 
+/// An error returned when exchanging the HTTP/3 CONNECT handshake.
 #[derive(Error, Debug, Clone)]
 pub enum ConnectError {
     #[error("quic stream was closed early")]
@@ -23,6 +24,7 @@ pub enum ConnectError {
     Status(http::StatusCode),
 }
 
+/// An HTTP/3 CONNECT request/response for establishing a WebTransport session.
 pub struct Connect {
     // The request that was sent by the client.
     request: ConnectRequest,
@@ -35,6 +37,9 @@ pub struct Connect {
 }
 
 impl Connect {
+    /// Accept an HTTP/3 CONNECT request from the client.
+    ///
+    /// This is called by the server to receive the CONNECT request.
     pub async fn accept(conn: &ez::Connection) -> Result<Self, ConnectError> {
         // Accept the stream that will be used to send the HTTP CONNECT request.
         // If they try to send any other type of HTTP request, we will error out.
@@ -51,7 +56,9 @@ impl Connect {
         })
     }
 
-    // Called by the server to send a response to the client.
+    /// Send an HTTP/3 CONNECT response to the client.
+    ///
+    /// This is called by the server to accept or reject the connection.
     pub async fn respond(&mut self, status: http::StatusCode) -> Result<(), ConnectError> {
         let response = ConnectResponse { status };
         tracing::debug!(?response, "sending CONNECT");
@@ -60,6 +67,9 @@ impl Connect {
         Ok(())
     }
 
+    /// Send an HTTP/3 CONNECT request to the server and wait for the response.
+    ///
+    /// This is called by the client to initiate a WebTransport session.
     pub async fn open(conn: &ez::Connection, url: Url) -> Result<Self, ConnectError> {
         tracing::debug!("opening bi");
 

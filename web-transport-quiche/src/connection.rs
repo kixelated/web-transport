@@ -30,7 +30,12 @@ impl Drop for ConnectionDrop {
     }
 }
 
-/// An established WebTransport session.
+/// An established WebTransport session, acting like a full QUIC connection.
+///
+/// It is important to remember that WebTransport is layered on top of QUIC:
+///   1. Each stream starts with a few bytes identifying the stream type and session ID.
+///   2. Error codes are encoded with the session ID, so they aren't full QUIC error codes.
+///   3. Stream IDs may have gaps in them, used by HTTP/3 transparent to the application.
 #[derive(Clone)]
 pub struct Connection {
     conn: ez::Connection,
@@ -125,6 +130,7 @@ impl Connection {
     }
 
     /// Connect using an established QUIC connection if you want to create the connection yourself.
+    ///
     /// This will only work with a brand new QUIC connection using the HTTP/3 ALPN.
     pub async fn connect(conn: ez::Connection, url: Url) -> Result<Connection, ClientError> {
         // Perform the H3 handshake by sending/reciving SETTINGS frames.
@@ -140,7 +146,10 @@ impl Connection {
         Ok(session)
     }
 
-    /// Accept a new unidirectional stream. See [`quiche::Connection::accept_uni`].
+    /// Accept a new unidirectional stream.
+    ///
+    /// Waits for a new incoming unidirectional stream from the remote peer.
+    /// Returns a [RecvStream] that can be used to read data from the stream.
     pub async fn accept_uni(&self) -> Result<RecvStream, SessionError> {
         if let Some(accept) = &self.accept {
             poll_fn(|cx| accept.lock().unwrap().poll_accept_uni(cx)).await
@@ -153,7 +162,10 @@ impl Connection {
         }
     }
 
-    /// Accept a new bidirectional stream. See [`quiche::Connection::accept_bi`].
+    /// Accept a new bidirectional stream.
+    ///
+    /// Waits for a new incoming bidirectional stream from the remote peer.
+    /// Returns a ([SendStream], [RecvStream]) pair for sending and receiving data.
     pub async fn accept_bi(&self) -> Result<(SendStream, RecvStream), SessionError> {
         if let Some(accept) = &self.accept {
             poll_fn(|cx| accept.lock().unwrap().poll_accept_bi(cx)).await
@@ -166,7 +178,10 @@ impl Connection {
         }
     }
 
-    /// Open a new unidirectional stream. See [`quiche::Connection::open_uni`].
+    /// Open a new unidirectional stream.
+    ///
+    /// Creates a new outgoing unidirectional stream to the remote peer.
+    /// Returns a [SendStream] that can be used to send data.
     pub async fn open_uni(&self) -> Result<SendStream, SessionError> {
         let mut send = self.conn.open_uni().await?;
 
@@ -177,7 +192,10 @@ impl Connection {
         Ok(SendStream::new(send))
     }
 
-    /// Open a new bidirectional stream. See [`quiche::Connection::open_bi`].
+    /// Open a new bidirectional stream.
+    ///
+    /// Creates a new outgoing bidirectional stream to the remote peer.
+    /// Returns a ([SendStream], [RecvStream]) pair for sending and receiving data.
     pub async fn open_bi(&self) -> Result<(SendStream, RecvStream), SessionError> {
         let (mut send, recv) = self.conn.open_bi().await?;
 
@@ -251,6 +269,8 @@ impl Connection {
     */
 
     /// Immediately close the connection with an error code and reason.
+    ///
+    /// The error code is a u32 with WebTransport since it shares the error space with HTTP/3.
     pub fn close(&self, code: u32, reason: &str) {
         let code = if self.session_id.is_some() {
             web_transport_proto::error_to_http3(code)
@@ -262,6 +282,8 @@ impl Connection {
     }
 
     /// Wait until the session is closed, returning the error.
+    ///
+    /// This method will block until the connection is closed by either the remote peer or locally.
     pub async fn closed(&self) -> SessionError {
         self.conn.closed().await.into()
     }
@@ -285,6 +307,7 @@ impl Connection {
         }
     }
 
+    /// Returns the URL used to establish this connection.
     pub fn url(&self) -> &Url {
         &self.url
     }

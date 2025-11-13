@@ -22,6 +22,7 @@ pub struct ServerWithListener {
     listeners: Vec<QuicListener>,
 }
 
+/// Construct a QUIC server using sane defaults.
 pub struct ServerBuilder<M: Metrics = DefaultMetrics, S = ServerInit> {
     settings: Settings,
     metrics: M,
@@ -30,19 +31,24 @@ pub struct ServerBuilder<M: Metrics = DefaultMetrics, S = ServerInit> {
 
 impl Default for ServerBuilder<DefaultMetrics> {
     fn default() -> Self {
-        Self::new(DefaultMetrics)
+        Self::with_metrics(DefaultMetrics)
     }
 }
 
-impl<M: Metrics> ServerBuilder<M, ServerInit> {
-    pub fn new(m: M) -> Self {
-        Self {
+impl ServerBuilder<DefaultMetrics, ServerInit> {
+    /// Create a new server builder with custom metrics.
+    ///
+    /// Use [ServerBuilder::default] if you don't care about metrics.
+    pub fn with_metrics<M: Metrics>(m: M) -> ServerBuilder<M, ServerInit> {
+        ServerBuilder {
             settings: Settings::default(),
             metrics: m,
             state: ServerInit {},
         }
     }
+}
 
+impl<M: Metrics> ServerBuilder<M, ServerInit> {
     fn next(self) -> ServerBuilder<M, ServerWithListener> {
         ServerBuilder {
             settings: self.settings,
@@ -51,10 +57,12 @@ impl<M: Metrics> ServerBuilder<M, ServerInit> {
         }
     }
 
+    /// Configure the server to use the provided QUIC listener.
     pub fn with_listener(self, listener: QuicListener) -> ServerBuilder<M, ServerWithListener> {
         self.next().with_listener(listener)
     }
 
+    /// Listen for incoming packets on the given socket.
     pub fn with_socket(
         self,
         socket: std::net::UdpSocket,
@@ -62,6 +70,7 @@ impl<M: Metrics> ServerBuilder<M, ServerInit> {
         self.next().with_socket(socket)
     }
 
+    /// Listen for incoming packets on the given address.
     pub fn with_bind<A: std::net::ToSocketAddrs>(
         self,
         addrs: A,
@@ -69,6 +78,7 @@ impl<M: Metrics> ServerBuilder<M, ServerInit> {
         self.next().with_bind(addrs)
     }
 
+    /// Use the provided [Settings] instead of the defaults.
     pub fn with_settings(mut self, settings: Settings) -> Self {
         self.settings = settings;
         self
@@ -76,11 +86,13 @@ impl<M: Metrics> ServerBuilder<M, ServerInit> {
 }
 
 impl<M: Metrics> ServerBuilder<M, ServerWithListener> {
+    /// Configure the server to use the provided QUIC listener.
     pub fn with_listener(mut self, listener: QuicListener) -> Self {
         self.state.listeners.push(listener);
         self
     }
 
+    /// Listen for incoming packets on the given socket.
     pub fn with_socket(self, socket: std::net::UdpSocket) -> io::Result<Self> {
         socket.set_nonblocking(true)?;
         let socket = tokio::net::UdpSocket::from_std(socket)?;
@@ -100,19 +112,20 @@ impl<M: Metrics> ServerBuilder<M, ServerWithListener> {
         Ok(self.with_listener(listener))
     }
 
+    /// Listen for incoming packets on the given address.
     pub fn with_bind<A: std::net::ToSocketAddrs>(self, addrs: A) -> io::Result<Self> {
         // We use std to avoid async
         let socket = std::net::UdpSocket::bind(addrs)?;
         self.with_socket(socket)
     }
 
+    /// Use the provided [Settings] instead of the defaults.
     pub fn with_settings(mut self, settings: Settings) -> Self {
         self.settings = settings;
         self
     }
 
-    // TODO add support for in-memory certs
-    // TODO add support for multiple certs
+    /// Configure the server to use the specified certificate for TLS.
     pub fn with_cert<'a>(self, tls: TlsCertificatePaths<'a>) -> io::Result<Server<M>> {
         let params =
             tokio_quiche::ConnectionParams::new_server(self.settings, tls, Hooks::default());
@@ -126,6 +139,7 @@ impl<M: Metrics> ServerBuilder<M, ServerWithListener> {
     }
 }
 
+/// A QUIC server that accepts new connections.
 pub struct Server<M: Metrics = DefaultMetrics> {
     accept: mpsc::Receiver<Connection>,
     // Cancels socket tasks when dropped.
@@ -178,6 +192,9 @@ impl<M: Metrics> Server<M> {
         Ok(())
     }
 
+    /// Accept a new QUIC [Connection] from a client.
+    ///
+    /// Returns `None` when the server is shutting down.
     pub async fn accept(&mut self) -> Option<Connection> {
         self.accept.recv().await
     }

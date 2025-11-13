@@ -2,6 +2,7 @@ use web_transport_proto::error_from_http3;
 
 use crate::ez;
 
+/// An error returned by [Connection], split based on whether they are underlying QUIC errors or WebTransport errors.
 #[derive(Clone, thiserror::Error, Debug)]
 pub enum SessionError {
     #[error("remote closed: code={0} reason={1}")]
@@ -20,6 +21,7 @@ pub enum SessionError {
     Unknown,
 }
 
+/// An error when reading from or writing to a WebTransport stream.
 #[derive(thiserror::Error, Debug)]
 pub enum StreamError {
     #[error("session error: {0}")]
