@@ -34,8 +34,8 @@ impl RecvStream {
         self.inner.read_buf(buf).await.map_err(Into::into)
     }
 
-    pub async fn read_all(&mut self) -> Result<Bytes, StreamError> {
-        self.inner.read_all().await.map_err(Into::into)
+    pub async fn read_all(&mut self, max: usize) -> Result<Bytes, StreamError> {
+        self.inner.read_all(max).await.map_err(Into::into)
     }
 
     pub fn close(&mut self, code: u32) {

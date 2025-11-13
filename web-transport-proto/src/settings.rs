@@ -2,6 +2,7 @@ use std::{
     collections::HashMap,
     fmt::Debug,
     ops::{Deref, DerefMut},
+    sync::Arc,
 };
 
 use bytes::{Buf, BufMut, BytesMut};
@@ -98,8 +99,14 @@ pub enum SettingsError {
     #[error("invalid size")]
     InvalidSize,
 
-    #[error("unsupported")]
-    Unsupported,
+    #[error("io error: {0}")]
+    Io(Arc<std::io::Error>),
+}
+
+impl From<std::io::Error> for SettingsError {
+    fn from(err: std::io::Error) -> Self {
+        SettingsError::Io(Arc::new(err))
+    }
 }
 
 // A map of settings to values.
@@ -136,10 +143,9 @@ impl Settings {
         let mut buf = Vec::new();
 
         loop {
-            stream
-                .read_buf(&mut buf)
-                .await
-                .map_err(|_| SettingsError::UnexpectedEnd)?;
+            if stream.read_buf(&mut buf).await? == 0 {
+                return Err(SettingsError::UnexpectedEnd);
+            }
 
             // Look at the buffer we've already read.
             let mut limit = std::io::Cursor::new(&buf);
@@ -172,10 +178,7 @@ impl Settings {
         // TODO avoid allocating to the heap
         let mut buf = BytesMut::new();
         self.encode(&mut buf);
-        stream
-            .write_all_buf(&mut buf)
-            .await
-            .map_err(|_| SettingsError::UnexpectedEnd)?;
+        stream.write_all_buf(&mut buf).await?;
         Ok(())
     }
 

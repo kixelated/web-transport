@@ -96,6 +96,8 @@ impl Connection {
         // Run a background task to check if the connect stream is closed.
         tokio::spawn(this.clone().run_closed(connect));
 
+        tracing::debug!(url = %this.url, "WebTransport connection established");
+
         this
     }
 
@@ -138,7 +140,7 @@ impl Connection {
         Ok(session)
     }
 
-    /// Accept a new unidirectional stream. See [`quinn::Connection::accept_uni`].
+    /// Accept a new unidirectional stream. See [`quiche::Connection::accept_uni`].
     pub async fn accept_uni(&self) -> Result<RecvStream, SessionError> {
         if let Some(accept) = &self.accept {
             poll_fn(|cx| accept.lock().unwrap().poll_accept_uni(cx)).await
@@ -151,7 +153,7 @@ impl Connection {
         }
     }
 
-    /// Accept a new bidirectional stream. See [`quinn::Connection::accept_bi`].
+    /// Accept a new bidirectional stream. See [`quiche::Connection::accept_bi`].
     pub async fn accept_bi(&self) -> Result<(SendStream, RecvStream), SessionError> {
         if let Some(accept) = &self.accept {
             poll_fn(|cx| accept.lock().unwrap().poll_accept_bi(cx)).await
@@ -164,24 +166,24 @@ impl Connection {
         }
     }
 
-    /// Open a new unidirectional stream. See [`quinn::Connection::open_uni`].
+    /// Open a new unidirectional stream. See [`quiche::Connection::open_uni`].
     pub async fn open_uni(&self) -> Result<SendStream, SessionError> {
         let mut send = self.conn.open_uni().await?;
 
         send.write_all(&self.header_uni)
             .await
-            .map_err(|_| SessionError::Header)?;
+            .map_err(SessionError::Header)?;
 
         Ok(SendStream::new(send))
     }
 
-    /// Open a new bidirectional stream. See [`quinn::Connection::open_bi`].
+    /// Open a new bidirectional stream. See [`quiche::Connection::open_bi`].
     pub async fn open_bi(&self) -> Result<(SendStream, RecvStream), SessionError> {
         let (mut send, recv) = self.conn.open_bi().await?;
 
         send.write_all(&self.header_bi)
             .await
-            .map_err(|_| SessionError::Header)?;
+            .map_err(SessionError::Header)?;
 
         Ok((SendStream::new(send), RecvStream::new(recv)))
     }
@@ -221,8 +223,8 @@ impl Connection {
     /// The data must be smaller than [`max_datagram_size`](Self::max_datagram_size).
     pub fn send_datagram(&self, data: Bytes) -> Result<(), SessionError> {
         if !self.header_datagram.is_empty() {
-            // Unfortunately, we need to allocate/copy each datagram because of the Quinn API.
-            // Pls go +1 if you care: https://github.com/quinn-rs/quinn/issues/1724
+            // Unfortunately, we need to allocate/copy each datagram because of the quiche API.
+            // Pls go +1 if you care: https://github.com/quiche-rs/quiche/issues/1724
             let mut buf = BytesMut::with_capacity(self.header_datagram.len() + data.len());
 
             // Prepend the datagram with the header indicating the session ID.

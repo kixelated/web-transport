@@ -11,7 +11,9 @@ use tokio_quiche::quiche;
 use bytes::{BufMut, Bytes, BytesMut};
 use tokio::io::{AsyncRead, ReadBuf};
 
-use super::{DriverWakeup, Lock, StreamError, StreamId};
+use crate::ez::DriverState;
+
+use super::{Lock, StreamError, StreamId};
 
 use tokio_quiche::quic::QuicheConnection;
 
@@ -64,10 +66,6 @@ impl RecvState {
             buf_capacity: 64,
             closed: false,
         }
-    }
-
-    pub fn id(&self) -> StreamId {
-        self.id
     }
 
     pub fn poll_read_chunk(
@@ -216,12 +214,12 @@ impl RecvState {
 pub struct RecvStream {
     id: StreamId,
     state: Lock<RecvState>,
-    wakeup: Lock<DriverWakeup>,
+    driver: Lock<DriverState>,
 }
 
 impl RecvStream {
-    pub(super) fn new(id: StreamId, state: Lock<RecvState>, wakeup: Lock<DriverWakeup>) -> Self {
-        Self { id, state, wakeup }
+    pub(super) fn new(id: StreamId, state: Lock<RecvState>, driver: Lock<DriverState>) -> Self {
+        Self { id, state, driver }
     }
 
     pub fn id(&self) -> StreamId {
@@ -248,8 +246,15 @@ impl RecvStream {
             return Poll::Ready(res);
         }
 
+        let mut driver = self.driver.lock();
+
+        // Check if the connection is closed.
+        if let Poll::Ready(res) = driver.closed(waker) {
+            return Poll::Ready(Err(res.into()));
+        }
+
         // If we're blocked, tell the driver we want more data.
-        let waker = self.wakeup.lock().waker(self.id);
+        let waker = driver.recv(self.id);
         if let Some(waker) = waker {
             waker.wake();
         }
@@ -272,18 +277,18 @@ impl RecvStream {
         }
     }
 
-    pub async fn read_all(&mut self) -> Result<Bytes, StreamError> {
-        let mut buf = BytesMut::new();
-        while self.read_buf(&mut buf).await?.is_some() {}
-
-        Ok(buf.freeze())
+    pub async fn read_all(&mut self, max: usize) -> Result<Bytes, StreamError> {
+        let buf = BytesMut::new();
+        let mut limit = buf.limit(max);
+        while limit.has_remaining_mut() && self.read_buf(&mut limit).await?.is_some() {}
+        Ok(limit.into_inner().freeze())
     }
 
     // Reset the stream with the given error code.
     pub fn close(&mut self, code: u64) {
         self.state.lock().stop = Some(code);
 
-        let waker = self.wakeup.lock().waker(self.id);
+        let waker = self.driver.lock().recv(self.id);
         if let Some(waker) = waker {
             waker.wake();
         }
@@ -299,6 +304,18 @@ impl RecvStream {
         self.state.lock().is_closed()
     }
 
+    fn poll_closed(&mut self, waker: &Waker) -> Poll<Result<(), StreamError>> {
+        if let Poll::Ready(res) = self.state.lock().poll_closed(waker) {
+            return Poll::Ready(res);
+        }
+
+        if let Poll::Ready(res) = self.driver.lock().closed(waker) {
+            return Poll::Ready(Err(res.into()));
+        }
+
+        Poll::Pending
+    }
+
     /// Block until the stream is closed by either side.
     ///
     /// This includes:
@@ -306,9 +323,9 @@ impl RecvStream {
     /// - We received a STOP_SENDING via [SendStream::close]
     /// - We received a FIN via [SendStream::finish]
     ///
-    /// NOTE: This takes &mut to match Quinn and to simplify the implementation.
+    /// NOTE: This takes &mut to match quiche and to simplify the implementation.
     pub async fn closed(&mut self) -> Result<(), StreamError> {
-        poll_fn(|cx| self.state.lock().poll_closed(cx.waker())).await
+        poll_fn(|cx| self.poll_closed(cx.waker())).await
     }
 }
 
@@ -321,7 +338,7 @@ impl Drop for RecvStream {
             // Avoid two locks at once.
             drop(state);
 
-            let waker = self.wakeup.lock().waker(self.id);
+            let waker = self.driver.lock().recv(self.id);
             if let Some(waker) = waker {
                 waker.wake();
             }

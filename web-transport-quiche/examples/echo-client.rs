@@ -48,7 +48,7 @@ async fn main() -> anyhow::Result<()> {
     send.finish()?;
 
     // Read back the message.
-    let msg = recv.read_all().await?;
+    let msg = recv.read_all(1024).await?;
     tracing::info!("recv: {}", String::from_utf8_lossy(&msg));
 
     session.close(42069, "bye");

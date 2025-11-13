@@ -1,4 +1,4 @@
-use std::str::FromStr;
+use std::{str::FromStr, sync::Arc};
 
 use bytes::{Buf, BufMut, BytesMut};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
@@ -49,6 +49,15 @@ pub enum ConnectError {
 
     #[error("non-200 status: {0:?}")]
     ErrorStatus(http::StatusCode),
+
+    #[error("io error: {0}")]
+    Io(Arc<std::io::Error>),
+}
+
+impl From<std::io::Error> for ConnectError {
+    fn from(err: std::io::Error) -> Self {
+        ConnectError::Io(Arc::new(err))
+    }
 }
 
 #[derive(Debug)]
@@ -101,10 +110,10 @@ impl ConnectRequest {
     pub async fn read<S: AsyncRead + Unpin>(stream: &mut S) -> Result<Self, ConnectError> {
         let mut buf = Vec::new();
         loop {
-            stream
-                .read_buf(&mut buf)
-                .await
-                .map_err(|_| ConnectError::UnexpectedEnd)?;
+            if stream.read_buf(&mut buf).await? == 0 {
+                return Err(ConnectError::UnexpectedEnd);
+            }
+
             let mut limit = std::io::Cursor::new(&buf);
             match Self::decode(&mut limit) {
                 Ok(request) => return Ok(request),
@@ -139,10 +148,7 @@ impl ConnectRequest {
     pub async fn write<S: AsyncWrite + Unpin>(&self, stream: &mut S) -> Result<(), ConnectError> {
         let mut buf = BytesMut::new();
         self.encode(&mut buf);
-        stream
-            .write_all_buf(&mut buf)
-            .await
-            .map_err(|_| ConnectError::UnexpectedEnd)?;
+        stream.write_all_buf(&mut buf).await?;
         Ok(())
     }
 }
@@ -178,10 +184,10 @@ impl ConnectResponse {
     pub async fn read<S: AsyncRead + Unpin>(stream: &mut S) -> Result<Self, ConnectError> {
         let mut buf = Vec::new();
         loop {
-            stream
-                .read_buf(&mut buf)
-                .await
-                .map_err(|_| ConnectError::UnexpectedEnd)?;
+            if stream.read_buf(&mut buf).await? == 0 {
+                return Err(ConnectError::UnexpectedEnd);
+            }
+
             let mut limit = std::io::Cursor::new(&buf);
             match Self::decode(&mut limit) {
                 Ok(response) => return Ok(response),
@@ -209,10 +215,7 @@ impl ConnectResponse {
     pub async fn write<S: AsyncWrite + Unpin>(&self, stream: &mut S) -> Result<(), ConnectError> {
         let mut buf = BytesMut::new();
         self.encode(&mut buf);
-        stream
-            .write_all_buf(&mut buf)
-            .await
-            .map_err(|_| ConnectError::UnexpectedEnd)?;
+        stream.write_all_buf(&mut buf).await?;
         Ok(())
     }
 }

@@ -12,12 +12,15 @@ use tokio::io::AsyncWrite;
 
 use tokio_quiche::quic::QuicheConnection;
 
-use super::{DriverWakeup, Lock, StreamError, StreamId};
+use crate::ez::DriverState;
+
+use super::{Lock, StreamError, StreamId};
 
 // "senddrop" in ascii; if you see this then call finish().await or close(code)
 // decimal: 7308889627613622128
 const DROP_CODE: u64 = 0x656E646464726F70;
 
+// TODO Move a lot of this into a state machine enum.
 pub(super) struct SendState {
     id: StreamId,
 
@@ -59,10 +62,6 @@ impl SendState {
             priority: None,
             closed: false,
         }
-    }
-
-    pub fn id(&self) -> StreamId {
-        self.id
     }
 
     // Write some of the buffer to the stream, advancing the internal position.
@@ -210,14 +209,12 @@ impl SendState {
 pub struct SendStream {
     id: StreamId,
     state: Lock<SendState>,
-
-    // Used to wake up the driver when the stream is writable.
-    wakeup: Lock<DriverWakeup>,
+    driver: Lock<DriverState>,
 }
 
 impl SendStream {
-    pub(super) fn new(id: StreamId, state: Lock<SendState>, wakeup: Lock<DriverWakeup>) -> Self {
-        Self { id, state, wakeup }
+    pub(super) fn new(id: StreamId, state: Lock<SendState>, driver: Lock<DriverState>) -> Self {
+        Self { id, state, driver }
     }
 
     pub fn id(&self) -> StreamId {
@@ -237,12 +234,17 @@ impl SendStream {
         buf: &mut B,
     ) -> Poll<Result<usize, StreamError>> {
         if let Poll::Ready(res) = self.state.lock().poll_write_buf(cx, buf) {
-            let waker = self.wakeup.lock().waker(self.id);
+            // Tell the driver that the stream has data to send.
+            let waker = self.driver.lock().send(self.id);
             if let Some(waker) = waker {
                 waker.wake();
             }
 
             return Poll::Ready(res);
+        }
+
+        if let Poll::Ready(res) = self.driver.lock().closed(cx.waker()) {
+            return Poll::Ready(Err(res.into()));
         }
 
         Poll::Pending
@@ -291,7 +293,7 @@ impl SendStream {
             state.fin = true;
         }
 
-        let waker = self.wakeup.lock().waker(self.id);
+        let waker = self.driver.lock().send(self.id);
         if let Some(waker) = waker {
             waker.wake();
         }
@@ -308,7 +310,7 @@ impl SendStream {
     pub fn close(&mut self, code: u64) {
         self.state.lock().reset = Some(code);
 
-        let waker = self.wakeup.lock().waker(self.id);
+        let waker = self.driver.lock().send(self.id);
         if let Some(waker) = waker {
             waker.wake();
         }
@@ -324,6 +326,18 @@ impl SendStream {
         self.state.lock().is_closed()
     }
 
+    fn poll_closed(&mut self, waker: &Waker) -> Poll<Result<(), StreamError>> {
+        if let Poll::Ready(res) = self.state.lock().poll_closed(waker) {
+            return Poll::Ready(res);
+        }
+
+        if let Poll::Ready(res) = self.driver.lock().closed(waker) {
+            return Poll::Ready(Err(res.into()));
+        }
+
+        Poll::Pending
+    }
+
     /// Block until the stream is closed by either side.
     ///
     /// This includes:
@@ -331,16 +345,16 @@ impl SendStream {
     /// - We received a STOP_SENDING via [RecvStream::close]
     /// - We sent a FIN via [Self::finish]
     ///
-    /// NOTE: This takes &mut to match Quinn and to simplify the implementation.
+    /// NOTE: This takes &mut to match quiche and to simplify the implementation.
     /// TODO: This should block until the FIN has been acknowledged, not just sent.
     pub async fn closed(&mut self) -> Result<(), StreamError> {
-        poll_fn(|cx| self.state.lock().poll_closed(cx.waker())).await
+        poll_fn(|cx| self.poll_closed(cx.waker())).await
     }
 
     pub fn set_priority(&mut self, priority: u8) {
         self.state.lock().priority = Some(priority);
 
-        let waker = self.wakeup.lock().waker(self.id);
+        let waker = self.driver.lock().send(self.id);
         if let Some(waker) = waker {
             waker.wake();
         }
@@ -356,7 +370,7 @@ impl Drop for SendStream {
             state.reset = Some(DROP_CODE);
             drop(state);
 
-            let waker = self.wakeup.lock().waker(self.id);
+            let waker = self.driver.lock().send(self.id);
             if let Some(waker) = waker {
                 waker.wake();
             }

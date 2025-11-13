@@ -2,20 +2,15 @@ use std::sync::Arc;
 use std::{
     future::poll_fn,
     ops::Deref,
-    sync::{
-        atomic::{self, AtomicU64},
-        Mutex,
-    },
+    sync::Mutex,
     task::{Poll, Waker},
 };
 use thiserror::Error;
 use tokio_quiche::quiche;
 
-use super::{DriverWakeup, Lock, RecvState, RecvStream, SendState, SendStream, StreamId};
+use crate::ez::DriverState;
 
-// "conndrop" in ascii; if you see this then close(code)
-// decimal: 8029476563109179248
-const DROP_CODE: u64 = 0x6F6E6E6464726F70;
+use super::{Lock, RecvStream, SendStream};
 
 /// An errors returned by [`Session`], split based on if they are underlying QUIC errors or WebTransport errors.
 #[derive(Clone, Error, Debug)]
@@ -39,14 +34,14 @@ pub enum ConnectionError {
 }
 
 #[derive(Default)]
-struct ConnectionCloseState {
+struct ConnectionClosedState {
     err: Option<ConnectionError>,
     wakers: Vec<Waker>,
 }
 
 #[derive(Clone, Default)]
 pub(super) struct ConnectionClosed {
-    state: Arc<Mutex<ConnectionCloseState>>,
+    state: Arc<Mutex<ConnectionClosedState>>,
 }
 
 impl ConnectionClosed {
@@ -72,97 +67,73 @@ impl ConnectionClosed {
         Poll::Pending
     }
 
-    pub async fn wait(&self) -> ConnectionError {
-        poll_fn(|cx| self.poll(cx.waker())).await
-    }
-
     pub fn is_closed(&self) -> bool {
         self.state.lock().unwrap().err.is_some()
     }
 }
 
 // Closes the connection when all references are dropped.
-struct ConnectionDrop {
-    closed: ConnectionClosed,
+struct ConnectionClose {
+    driver: Lock<DriverState>,
 }
 
-impl ConnectionDrop {
-    pub fn new(closed: ConnectionClosed) -> Self {
-        Self { closed }
+impl ConnectionClose {
+    pub fn new(driver: Lock<DriverState>) -> Self {
+        Self { driver }
+    }
+
+    pub fn close(&self, err: ConnectionError) {
+        let wakers = self.driver.lock().close(err);
+
+        for waker in wakers {
+            waker.wake();
+        }
+    }
+
+    pub async fn wait(&self) -> ConnectionError {
+        poll_fn(|cx| self.driver.lock().closed(cx.waker())).await
+    }
+
+    pub fn is_closed(&self) -> bool {
+        self.driver.lock().is_closed()
     }
 }
 
-impl Drop for ConnectionDrop {
+impl Drop for ConnectionClose {
     fn drop(&mut self) {
-        self.closed.abort(ConnectionError::Local(
-            DROP_CODE,
-            "connection dropped".to_string(),
-        ));
+        self.close(ConnectionError::Dropped);
     }
-}
-
-pub(super) struct ConnectionArgs {
-    pub inner: tokio_quiche::QuicConnection,
-    pub server: bool,
-    pub accept_bi: flume::Receiver<(SendStream, RecvStream)>,
-    pub accept_uni: flume::Receiver<RecvStream>,
-    pub open_bi: flume::Sender<(Lock<SendState>, Lock<RecvState>)>,
-    pub open_uni: flume::Sender<Lock<SendState>>,
-    pub send_wakeup: Lock<DriverWakeup>,
-    pub recv_wakeup: Lock<DriverWakeup>,
-    pub closed_local: ConnectionClosed,
-    pub closed_remote: ConnectionClosed,
 }
 
 #[derive(Clone)]
 pub struct Connection {
     inner: Arc<tokio_quiche::QuicConnection>,
 
+    // Unbounded
     accept_bi: flume::Receiver<(SendStream, RecvStream)>,
     accept_uni: flume::Receiver<RecvStream>,
 
-    open_bi: flume::Sender<(Lock<SendState>, Lock<RecvState>)>,
-    open_uni: flume::Sender<Lock<SendState>>,
+    driver: Lock<DriverState>,
 
-    next_uni: Arc<AtomicU64>,
-    next_bi: Arc<AtomicU64>,
-
-    send_wakeup: Lock<DriverWakeup>,
-    recv_wakeup: Lock<DriverWakeup>,
-
-    closed_local: ConnectionClosed,
-    closed_remote: ConnectionClosed,
-
-    #[allow(dead_code)]
-    drop: Arc<ConnectionDrop>,
+    // Held in an Arc so we can use Drop when all references are dropped.
+    close: Arc<ConnectionClose>,
 }
 
 impl Connection {
-    pub(super) fn new(args: ConnectionArgs) -> Self {
-        let next_uni = match args.server {
-            true => StreamId::SERVER_UNI,
-            false => StreamId::CLIENT_UNI,
-        };
-        let next_bi = match args.server {
-            true => StreamId::SERVER_BI,
-            false => StreamId::CLIENT_BI,
-        };
-
-        let drop = Arc::new(ConnectionDrop::new(args.closed_local.clone()));
+    pub(super) fn new(
+        conn: tokio_quiche::QuicConnection,
+        driver: Lock<DriverState>,
+        accept_bi: flume::Receiver<(SendStream, RecvStream)>,
+        accept_uni: flume::Receiver<RecvStream>,
+    ) -> Self {
+        let close = Arc::new(ConnectionClose::new(driver.clone()));
 
         Self {
-            inner: Arc::new(args.inner),
-            accept_bi: args.accept_bi,
-            accept_uni: args.accept_uni,
-            open_bi: args.open_bi,
-            open_uni: args.open_uni,
-            next_uni: Arc::new(next_uni.into()),
-            next_bi: Arc::new(next_bi.into()),
-            send_wakeup: args.send_wakeup,
-            recv_wakeup: args.recv_wakeup,
-            closed_local: args.closed_local,
-            closed_remote: args.closed_remote,
-            drop,
+            inner: Arc::new(conn),
+            accept_bi,
+            accept_uni,
+            driver,
+            close,
         }
     }
 
@@ -184,35 +155,26 @@ impl Connection {
 
     /// Create a new bidirectional stream when the peer allows it.
     pub async fn open_bi(&self) -> Result<(SendStream, RecvStream), ConnectionError> {
-        let id = StreamId::from(self.next_bi.fetch_add(4, atomic::Ordering::Relaxed));
+        let (wakeup, id, send, recv) = poll_fn(|cx| self.driver.lock().open_bi(cx.waker())).await?;
+        if let Some(wakeup) = wakeup {
+            wakeup.wake();
+        }
 
-        let send = Lock::new(SendState::new(id));
-        let recv = Lock::new(RecvState::new(id));
-
-        // TODO block until the driver can create the stream
-        tokio::select! {
-            Ok(_) = self.open_bi.send_async((send.clone(), recv.clone())) => {},
-            res = self.closed() => return Err(res),
-        };
-
-        let send = SendStream::new(id, send, self.send_wakeup.clone());
-        let recv = RecvStream::new(id, recv, self.recv_wakeup.clone());
+        let send = SendStream::new(id, send, self.driver.clone());
+        let recv = RecvStream::new(id, recv, self.driver.clone());
 
         Ok((send, recv))
     }
 
     /// Create a new unidirectional stream when the peer allows it.
     pub async fn open_uni(&self) -> Result<SendStream, ConnectionError> {
-        let id = StreamId::from(self.next_uni.fetch_add(4, atomic::Ordering::Relaxed));
+        let (wakeup, id, send) = poll_fn(|cx| self.driver.lock().open_uni(cx.waker())).await?;
+        if let Some(wakeup) = wakeup {
+            wakeup.wake();
+        }
 
-        // TODO wait until the driver ACKs
-        let state = Lock::new(SendState::new(id));
-        tokio::select! {
-            Ok(_) = self.open_uni.send_async(state.clone()) => {},
-            res = self.closed() => return Err(res),
-        };
-
-        Ok(SendStream::new(id, state, self.send_wakeup.clone()))
+        let send = SendStream::new(id, send, self.driver.clone());
+        Ok(send)
     }
 
     /// Closes the connection, returning an error if the connection was already closed.
@@ -220,13 +182,8 @@ impl Connection {
     /// You should wait until [Self::closed] returns if you wait to ensure the CONNECTION_CLOSED is received.
     /// Otherwise, the close may be lost and the peer will have to wait for a timeout.
     pub fn close(&self, code: u64, reason: &str) {
-        let wakers = self
-            .closed_local
-            .abort(ConnectionError::Local(code, reason.to_string()));
-
-        for waker in wakers {
-            waker.wake();
-        }
+        self.close
+            .close(ConnectionError::Local(code, reason.to_string()));
     }
 
     /// Blocks until the connection is closed by the peer.
@@ -234,14 +191,14 @@ impl Connection {
     /// If [Self::close] is called, this will block until the peer acknowledges the close.
     /// This is recommended to avoid tearing down the connection too early.
     pub async fn closed(&self) -> ConnectionError {
-        self.closed_remote.wait().await
+        self.close.wait().await
     }
 
     /// Returns true if the connection is closed by either side.
     ///
     /// NOTE: This includes local closures, unlike [Self::closed].
     pub fn is_closed(&self) -> bool {
-        self.closed_local.is_closed() || self.closed_remote.is_closed()
+        self.close.is_closed()
     }
 }
 

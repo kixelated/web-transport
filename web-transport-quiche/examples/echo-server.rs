@@ -81,7 +81,7 @@ async fn run_conn(request: web_transport_quiche::h3::Request) -> anyhow::Result<
         tracing::info!("accepted stream");
 
         // Read the message and echo it back.
-        let mut msg: Bytes = recv.read_all().await?;
+        let mut msg: Bytes = recv.read_all(1024).await?;
         tracing::info!("recv: {}", String::from_utf8_lossy(&msg));
 
         tracing::info!("send: {}", String::from_utf8_lossy(&msg));

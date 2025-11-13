@@ -26,13 +26,21 @@ impl<T> Lock<T> {
     }
 
     pub fn lock(&self) -> LockGuard<'_, T> {
+        //println!("locking: {:p} {:?}", self, std::thread::current().id());
         let guard = self.inner.lock().unwrap();
+        //println!("locked: {:p} {:?}", self, std::thread::current().id());
         LockGuard { guard }
     }
 }
 
 pub(super) struct LockGuard<'a, T> {
     guard: MutexGuard<'a, T>,
+}
+
+impl<'a, T> Drop for LockGuard<'a, T> {
+    fn drop(&mut self) {
+        //println!("unlocking: {:p} {:?}", self, std::thread::current().id());
+    }
 }
 
 impl<'a, T> Deref for LockGuard<'a, T> {

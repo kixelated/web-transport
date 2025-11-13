@@ -40,13 +40,13 @@ pub enum ClientError {
 #[derive(Clone, Error, Debug)]
 pub enum SessionError {
     #[error("connection error: {0}")]
-    Connection(quinn::ConnectionError),
+    ConnectionError(quinn::ConnectionError),
 
     #[error("webtransport error: {0}")]
     WebTransport(#[from] WebTransportError),
 
-    #[error("datagram error: {0}")]
-    Datagram(#[from] quinn::SendDatagramError),
+    #[error("send datagram error: {0}")]
+    SendDatagramError(#[from] quinn::SendDatagramError),
 }
 
 impl From<quinn::ConnectionError> for SessionError {
@@ -59,11 +59,11 @@ impl From<quinn::ConnectionError> for SessionError {
                         String::from_utf8_lossy(&close.reason).into_owned(),
                     )
                     .into(),
-                    None => SessionError::Connection(e),
+                    None => SessionError::ConnectionError(e),
                 }
             }
             quinn::ConnectionError::LocallyClosed => WebTransportError::LocallyClosed.into(),
-            _ => SessionError::Connection(e),
+            _ => SessionError::ConnectionError(e),
         }
     }
 }

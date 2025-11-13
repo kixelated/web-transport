@@ -1,7 +1,6 @@
 use std::{io, marker::PhantomData};
 use tokio::sync::mpsc;
 use tokio::task::JoinSet;
-#[cfg(not(target_os = "linux"))]
 use tokio_quiche::socket::SocketCapabilities;
 use tokio_quiche::{
     quic::SimpleConnectionIdGenerator,
@@ -9,11 +8,9 @@ use tokio_quiche::{
     socket::QuicListener,
 };
 
-use crate::ez::{ConnectionArgs, DriverArgs};
+use crate::ez::DriverState;
 
-use super::{
-    Connection, ConnectionClosed, DefaultMetrics, Driver, DriverWakeup, Lock, Metrics, Settings,
-};
+use super::{Connection, DefaultMetrics, Driver, Lock, Metrics, Settings};
 
 /// Used with [ServerBuilder] to require specific parameters.
 #[derive(Default)]
@@ -167,40 +164,11 @@ impl<M: Metrics> Server<M> {
             let accept_bi = flume::unbounded();
             let accept_uni = flume::unbounded();
 
-            let open_bi = flume::bounded(1);
-            let open_uni = flume::bounded(1);
-
-            let send_wakeup = Lock::new(DriverWakeup::default());
-            let recv_wakeup = Lock::new(DriverWakeup::default());
-
-            let closed_local = ConnectionClosed::default();
-            let closed_remote = ConnectionClosed::default();
-
-            let session = Driver::new(DriverArgs {
-                server: true,
-                send_wakeup: send_wakeup.clone(),
-                recv_wakeup: recv_wakeup.clone(),
-                accept_bi: accept_bi.0,
-                accept_uni: accept_uni.0,
-                open_bi: open_bi.1,
-                open_uni: open_uni.1,
-                closed_local: closed_local.clone(),
-                closed_remote: closed_remote.clone(),
-            });
+            let state = Lock::new(DriverState::new(true));
+            let session = Driver::new(state.clone(), accept_bi.0, accept_uni.0);
 
             let inner = initial.start(session);
-            let connection = Connection::new(ConnectionArgs {
-                inner,
-                server: true,
-                accept_bi: accept_bi.1,
-                accept_uni: accept_uni.1,
-                open_bi: open_bi.0,
-                open_uni: open_uni.0,
-                send_wakeup,
-                recv_wakeup,
-                closed_local,
-                closed_remote,
-            });
+            let connection = Connection::new(inner, state, accept_bi.1, accept_uni.1);
 
             if accept.send(connection).await.is_err() {
                 return Ok(());

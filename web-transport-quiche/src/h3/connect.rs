@@ -41,7 +41,7 @@ impl Connect {
         let (send, mut recv) = conn.accept_bi().await?;
 
         let request = web_transport_proto::ConnectRequest::read(&mut recv).await?;
-        tracing::debug!("received CONNECT request: {request:?}");
+        tracing::debug!(?request, "received CONNECT");
 
         // The request was successfully decoded, so we can send a response.
         Ok(Self {
@@ -53,30 +53,27 @@ impl Connect {
 
     // Called by the server to send a response to the client.
     pub async fn respond(&mut self, status: http::StatusCode) -> Result<(), ConnectError> {
-        let resp = ConnectResponse { status };
-
-        tracing::debug!("sending CONNECT response: {resp:?}");
-
-        let mut buf = Vec::new();
-        resp.encode(&mut buf);
-
-        self.send.write_all(&buf).await?;
+        let response = ConnectResponse { status };
+        tracing::debug!(?response, "sending CONNECT");
+        response.write(&mut self.send).await?;
 
         Ok(())
     }
 
     pub async fn open(conn: &ez::Connection, url: Url) -> Result<Self, ConnectError> {
+        tracing::debug!("opening bi");
+
         // Create a new stream that will be used to send the CONNECT frame.
         let (mut send, mut recv) = conn.open_bi().await?;
 
         // Create a new CONNECT request that we'll send using HTTP/3
         let request = ConnectRequest { url };
 
-        tracing::debug!("sending CONNECT request: {request:?}");
+        tracing::debug!(?request, "sending CONNECT");
         request.write(&mut send).await?;
 
         let response = web_transport_proto::ConnectResponse::read(&mut recv).await?;
-        tracing::debug!("received CONNECT response: {response:?}");
+        tracing::debug!(?response, "received CONNECT");
 
         // Throw an error if we didn't get a 200 OK.
         if response.status != http::StatusCode::OK {

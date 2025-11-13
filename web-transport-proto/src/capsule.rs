@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
@@ -72,10 +74,10 @@ impl Capsule {
     pub async fn read<S: AsyncRead + Unpin>(stream: &mut S) -> Result<Self, CapsuleError> {
         let mut buf = Vec::new();
         loop {
-            stream
-                .read_buf(&mut buf)
-                .await
-                .map_err(|_| CapsuleError::UnexpectedEnd)?;
+            if stream.read_buf(&mut buf).await? == 0 {
+                return Err(CapsuleError::UnexpectedEnd);
+            }
+
             let mut limit = std::io::Cursor::new(&buf);
             match Self::decode(&mut limit) {
                 Ok(capsule) => return Ok(capsule),
@@ -122,10 +124,7 @@ impl Capsule {
     pub async fn write<S: AsyncWrite + Unpin>(&self, stream: &mut S) -> Result<(), CapsuleError> {
         let mut buf = BytesMut::new();
         self.encode(&mut buf);
-        stream
-            .write_all_buf(&mut buf)
-            .await
-            .map_err(|_| CapsuleError::UnexpectedEnd)?;
+        stream.write_all_buf(&mut buf).await?;
         Ok(())
     }
 }
@@ -140,7 +139,7 @@ fn is_grease(val: u64) -> bool {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[derive(Debug, Clone, thiserror::Error)]
 pub enum CapsuleError {
     #[error("unexpected end of buffer")]
     UnexpectedEnd,
@@ -156,6 +155,15 @@ pub enum CapsuleError {
 
     #[error("varint decode error: {0:?}")]
     VarInt(#[from] VarIntUnexpectedEnd),
+
+    #[error("io error: {0}")]
+    Io(Arc<std::io::Error>),
+}
+
+impl From<std::io::Error> for CapsuleError {
+    fn from(err: std::io::Error) -> Self {
+        CapsuleError::Io(Arc::new(err))
+    }
 }
 
 #[cfg(test)]

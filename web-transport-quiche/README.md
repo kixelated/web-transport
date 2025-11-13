@@ -1,5 +1,5 @@
-[![crates.io](https://img.shields.io/crates/v/web-transport-quinn)](https://crates.io/crates/web-transport-quinn)
-[![docs.rs](https://img.shields.io/docsrs/web-transport-quinn)](https://docs.rs/web-transport-quinn)
+[![crates.io](https://img.shields.io/crates/v/web-transport-quiche)](https://crates.io/crates/web-transport-quiche)
+[![docs.rs](https://img.shields.io/docsrs/web-transport-quiche)](https://docs.rs/web-transport-quiche)
 [![discord](https://img.shields.io/discord/1124083992740761730)](https://discord.gg/FCYF3p99mr)
 
 # web-transport-quiche
@@ -11,7 +11,7 @@ Provides a QUIC-like API but with web support!
 It's [available in the browser](https://caniuse.com/webtransport) as an alternative to HTTP and WebSockets.
 
 WebTransport is layered on top of HTTP/3 which itself is layered on top of QUIC.
-This library hides that detail and exposes only the QUIC API, delegating as much as possible to the underlying QUIC implementation (Quinn).
+This library hides that detail and exposes only the QUIC API, delegating as much as possible to the underlying QUIC implementation (quiche).
 
 QUIC provides two primary APIs:
 

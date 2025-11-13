@@ -13,11 +13,11 @@ pub enum SessionError {
     #[error("connection error: {0}")]
     Connection(ez::ConnectionError),
 
+    #[error("invalid stream header: {0}")]
+    Header(ez::StreamError),
+
     #[error("unknown session")]
     Unknown,
-
-    #[error("invalid stream header")]
-    Header,
 }
 
 #[derive(thiserror::Error, Debug)]

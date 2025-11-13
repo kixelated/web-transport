@@ -2,11 +2,10 @@ use std::io;
 use std::sync::Arc;
 use tokio_quiche::settings::{Hooks, TlsCertificatePaths};
 
-use crate::ez::{ConnectionArgs, DriverArgs};
+use crate::ez::DriverState;
 
 use super::{
-    CertificateKind, CertificatePath, Connection, ConnectionClosed, DefaultMetrics, Driver,
-    DriverWakeup, Lock, Metrics, Settings,
+    CertificateKind, CertificatePath, Connection, DefaultMetrics, Driver, Lock, Metrics, Settings,
 };
 
 pub struct ClientBuilder<M: Metrics = DefaultMetrics> {
@@ -139,44 +138,14 @@ impl<M: Metrics> ClientBuilder<M> {
         let accept_bi = flume::unbounded();
         let accept_uni = flume::unbounded();
 
-        let open_bi = flume::bounded(1);
-        let open_uni = flume::bounded(1);
+        let driver = Lock::new(DriverState::new(false));
+        let app = Driver::new(driver.clone(), accept_bi.0, accept_uni.0);
 
-        let send_wakeup = Lock::new(DriverWakeup::default());
-        let recv_wakeup = Lock::new(DriverWakeup::default());
-
-        let closed_local = ConnectionClosed::default();
-        let closed_remote = ConnectionClosed::default();
-
-        let driver = Driver::new(DriverArgs {
-            server: false,
-            send_wakeup: send_wakeup.clone(),
-            recv_wakeup: recv_wakeup.clone(),
-            accept_bi: accept_bi.0,
-            accept_uni: accept_uni.0,
-            open_bi: open_bi.1,
-            open_uni: open_uni.1,
-            closed_local: closed_local.clone(),
-            closed_remote: closed_remote.clone(),
-        });
-
-        let conn = tokio_quiche::quic::connect_with_config(socket, Some(host), &params, driver)
+        let conn = tokio_quiche::quic::connect_with_config(socket, Some(host), &params, app)
             .await
             .map_err(|e| io::Error::other(e.to_string()))?;
 
-        let conn = Connection::new(ConnectionArgs {
-            inner: conn,
-            server: false,
-            accept_bi: accept_bi.1,
-            accept_uni: accept_uni.1,
-            open_bi: open_bi.0,
-            open_uni: open_uni.0,
-            send_wakeup,
-            recv_wakeup,
-            closed_local,
-            closed_remote,
-        });
-
+        let conn = Connection::new(conn, driver, accept_bi.1, accept_uni.1);
         Ok(conn)
     }
 }
