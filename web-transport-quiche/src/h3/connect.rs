@@ -100,7 +100,7 @@ impl Connect {
         &self.request.url
     }
 
-    pub(crate) fn into_inner(self) -> (ez::SendStream, ez::RecvStream) {
+    pub fn into_inner(self) -> (ez::SendStream, ez::RecvStream) {
         (self.send, self.recv)
     }
 }

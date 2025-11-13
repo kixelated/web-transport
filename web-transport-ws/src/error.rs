@@ -63,12 +63,7 @@ impl web_transport_trait::Error for Error {
     fn stream_error(&self) -> Option<u32> {
         match self {
             // TODO We should only support u32 on the wire?
-            Error::StreamReset(code) | Error::StreamStop(code) => {
-                match code.into_inner().try_into() {
-                    Ok(code) => Some(code),
-                    Err(_) => None,
-                }
-            }
+            Error::StreamReset(code) | Error::StreamStop(code) => code.into_inner().try_into().ok(),
             _ => None,
         }
     }

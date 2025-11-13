@@ -54,5 +54,7 @@ async fn main() -> anyhow::Result<()> {
     session.close(42069, "bye");
     session.closed().await;
 
+    tracing::info!("closed session");
+
     Ok(())
 }

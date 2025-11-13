@@ -1,22 +1,23 @@
 use std::{
-    collections::{HashMap, HashSet},
-    future::{poll_fn, Future},
+    collections::{hash_map, HashMap, HashSet},
+    future::poll_fn,
     task::{Poll, Waker},
 };
 use tokio_quiche::{
     buf_factory::{BufFactory, PooledBuf},
     quic::{HandshakeInfo, QuicheConnection},
-    quiche,
 };
 
+use crate::ez::Lock;
+
 use super::{
-    ConnectionClosed, ConnectionError, Lock, Metrics, RecvState, RecvStream, SendState, SendStream,
+    ConnectionClosed, ConnectionError, Metrics, RecvState, RecvStream, SendState, SendStream,
     StreamId,
 };
 
 // Streams that need to be flushed to the quiche connection.
 #[derive(Default)]
-pub(crate) struct DriverWakeup {
+pub(super) struct DriverWakeup {
     streams: HashSet<StreamId>,
     waker: Option<Waker>,
 }
@@ -28,11 +29,23 @@ impl DriverWakeup {
         }
 
         // You should call wake() without holding the lock.
-        return self.waker.take();
+        self.waker.take()
     }
 }
 
-pub(crate) struct Driver {
+pub(super) struct DriverArgs {
+    pub server: bool,
+    pub send_wakeup: Lock<DriverWakeup>,
+    pub recv_wakeup: Lock<DriverWakeup>,
+    pub accept_bi: flume::Sender<(SendStream, RecvStream)>,
+    pub accept_uni: flume::Sender<RecvStream>,
+    pub open_bi: flume::Receiver<(Lock<SendState>, Lock<RecvState>)>,
+    pub open_uni: flume::Receiver<Lock<SendState>>,
+    pub closed_local: ConnectionClosed,
+    pub closed_remote: ConnectionClosed,
+}
+
+pub(super) struct Driver {
     send: HashMap<StreamId, Lock<SendState>>,
     recv: HashMap<StreamId, Lock<RecvState>>,
 
@@ -42,7 +55,10 @@ pub(crate) struct Driver {
     recv_wakeup: Lock<DriverWakeup>,
 
     accept_bi: flume::Sender<(SendStream, RecvStream)>,
+    accept_bi_next: StreamId, // The next stream ID we expect, preventing duplicates.
+
     accept_uni: flume::Sender<RecvStream>,
+    accept_uni_next: StreamId, // The next stream ID we expect, preventing duplicates.
 
     open_bi: flume::Receiver<(Lock<SendState>, Lock<RecvState>)>,
     open_uni: flume::Receiver<Lock<SendState>>,
@@ -52,29 +68,30 @@ pub(crate) struct Driver {
 }
 
 impl Driver {
-    pub fn new(
-        // Super gross, we should consolidate
-        send_wakeup: Lock<DriverWakeup>,
-        recv_wakeup: Lock<DriverWakeup>,
-        accept_bi: flume::Sender<(SendStream, RecvStream)>,
-        accept_uni: flume::Sender<RecvStream>,
-        open_bi: flume::Receiver<(Lock<SendState>, Lock<RecvState>)>,
-        open_uni: flume::Receiver<Lock<SendState>>,
-        closed_local: ConnectionClosed,
-        closed_remote: ConnectionClosed,
-    ) -> Self {
+    pub fn new(args: DriverArgs) -> Self {
+        let accept_bi_next = match args.server {
+            true => StreamId::CLIENT_BI,
+            false => StreamId::SERVER_BI,
+        };
+        let accept_uni_next = match args.server {
+            true => StreamId::CLIENT_UNI,
+            false => StreamId::SERVER_UNI,
+        };
+
         Self {
             send: HashMap::new(),
             recv: HashMap::new(),
             buf: BufFactory::get_max_buf(),
-            send_wakeup,
-            recv_wakeup,
-            accept_bi,
-            accept_uni,
-            open_bi,
-            open_uni,
-            closed_local,
-            closed_remote,
+            send_wakeup: args.send_wakeup,
+            recv_wakeup: args.recv_wakeup,
+            accept_bi: args.accept_bi,
+            accept_bi_next,
+            accept_uni: args.accept_uni,
+            accept_uni_next,
+            open_bi: args.open_bi,
+            open_uni: args.open_uni,
+            closed_local: args.closed_local,
+            closed_remote: args.closed_remote,
         }
     }
 
@@ -94,28 +111,63 @@ impl Driver {
         while let Some(stream_id) = qconn.stream_readable_next() {
             let stream_id = StreamId::from(stream_id);
 
-            if let Some(entry) = self.recv.get_mut(&stream_id) {
-                // Wake after dropping the lock to avoid deadlock
-                let waker = entry.lock().flush(qconn)?;
-                if let Some(waker) = waker {
-                    waker.wake();
+            let recv = match self.recv.entry(stream_id) {
+                hash_map::Entry::Occupied(mut entry) => {
+                    let state = entry.get_mut();
+                    let mut state = state.lock();
+
+                    // Wake after dropping the lock to avoid deadlock
+                    let waker = state.flush(qconn)?;
+                    let closed = state.is_closed();
+                    drop(state);
+
+                    if closed {
+                        tracing::trace!(?stream_id, "removing closed stream");
+                        entry.remove();
+                    }
+
+                    if let Some(waker) = waker {
+                        waker.wake();
+                    }
+
+                    continue;
                 }
+                hash_map::Entry::Vacant(entry) => {
+                    if stream_id.is_bi() {
+                        if stream_id < self.accept_bi_next {
+                            tracing::warn!(?stream_id, "ignoring readable closed stream");
+                            continue;
+                        }
 
-                continue;
-            }
+                        // We assume that quiche flushes streams in order...
+                        assert_eq!(stream_id, self.accept_bi_next);
+                        self.accept_bi_next.increment();
+                    } else {
+                        if stream_id < self.accept_uni_next {
+                            tracing::warn!(?stream_id, "ignoring readable closed stream");
+                            continue;
+                        }
+                        // We assume that quiche flushes streams in order...
+                        assert_eq!(stream_id, self.accept_uni_next);
+                        self.accept_uni_next.increment();
+                    }
 
-            let mut state = RecvState::new(stream_id);
-            state.flush(qconn)?; // no waker will be returned
+                    let mut state = RecvState::new(stream_id);
+                    let waker = state.flush(qconn)?;
+                    assert!(waker.is_none());
 
-            let state = Lock::new(state, "RecvState");
-            self.recv.insert(stream_id, state.clone());
-            let recv = RecvStream::new(stream_id, state.clone(), self.recv_wakeup.clone());
+                    let state = Lock::new(state);
+                    entry.insert(state.clone());
+                    RecvStream::new(stream_id, state.clone(), self.recv_wakeup.clone())
+                }
+            };
 
             if stream_id.is_bi() {
                 let mut state = SendState::new(stream_id);
-                state.flush(qconn)?; // no waker will be returned
+                let waker = state.flush(qconn)?;
+                assert!(waker.is_none());
 
-                let state = Lock::new(state, "SendState");
+                let state = Lock::new(state);
                 self.send.insert(stream_id, state.clone());
 
                 let send = SendStream::new(stream_id, state.clone(), self.send_wakeup.clone());
@@ -136,13 +188,27 @@ impl Driver {
         while let Some(stream_id) = qconn.stream_writable_next() {
             let stream_id = StreamId::from(stream_id);
 
-            if let Some(state) = self.send.get_mut(&stream_id) {
-                let waker = state.lock().flush(qconn)?;
-                if let Some(waker) = waker {
-                    waker.wake();
+            match self.send.entry(stream_id) {
+                hash_map::Entry::Occupied(mut entry) => {
+                    let state = entry.get_mut();
+                    let mut state = state.lock();
+
+                    let waker = state.flush(qconn)?;
+                    let closed = state.is_closed();
+                    drop(state);
+
+                    if closed {
+                        tracing::trace!(?stream_id, "removing closed stream");
+                        entry.remove();
+                    }
+
+                    if let Some(waker) = waker {
+                        waker.wake();
+                    }
                 }
-            } else {
-                return Err(quiche::Error::InvalidStreamState(stream_id.into()).into());
+                hash_map::Entry::Vacant(_entry) => {
+                    tracing::warn!(?stream_id, "closed stream was writable");
+                }
             }
         }
 
@@ -205,13 +271,29 @@ impl Driver {
             drop(recv);
 
             for stream_id in streams {
-                if let Some(stream) = self.recv.get_mut(&stream_id) {
-                    let waker = stream.lock().flush(qconn)?;
-                    if let Some(waker) = waker {
-                        waker.wake();
-                    }
+                match self.recv.entry(stream_id) {
+                    hash_map::Entry::Occupied(mut entry) => {
+                        let state = entry.get_mut();
+                        let mut state = state.lock();
 
-                    wait = false;
+                        let waker = state.flush(qconn)?;
+                        let closed = state.is_closed();
+                        drop(state);
+
+                        if closed {
+                            tracing::trace!(?stream_id, "removing closed stream");
+                            entry.remove();
+                        }
+
+                        if let Some(waker) = waker {
+                            waker.wake();
+                        }
+
+                        wait = false;
+                    }
+                    hash_map::Entry::Vacant(_entry) => {
+                        tracing::warn!(?stream_id, "wakeup for closed stream");
+                    }
                 }
             }
         }
@@ -235,13 +317,29 @@ impl Driver {
             drop(send);
 
             for stream_id in streams {
-                if let Some(stream) = self.send.get_mut(&stream_id) {
-                    let waker = stream.lock().flush(qconn)?;
-                    if let Some(waker) = waker {
-                        waker.wake();
-                    }
+                match self.send.entry(stream_id) {
+                    hash_map::Entry::Occupied(mut entry) => {
+                        let state = entry.get_mut();
+                        let mut state = state.lock();
 
-                    wait = false;
+                        let waker = state.flush(qconn)?;
+                        let closed = state.is_closed();
+                        drop(state);
+
+                        if closed {
+                            tracing::trace!(?stream_id, "removing closed stream");
+                            entry.remove();
+                        }
+
+                        if let Some(waker) = waker {
+                            waker.wake();
+                        }
+
+                        wait = false;
+                    }
+                    hash_map::Entry::Vacant(_entry) => {
+                        tracing::warn!(?stream_id, "wakeup for closed stream");
+                    }
                 }
             }
         }
@@ -279,14 +377,18 @@ impl Driver {
     ) -> Result<(), ConnectionError> {
         let id = {
             let mut state = send.lock();
-            let id = state.id();
-            qconn.stream_send(id.into(), &[], false)?;
+
+            let stream_id = state.id();
+            tracing::trace!(?stream_id, "opening bidirectional stream");
+            qconn.stream_send(stream_id.into(), &[], false)?;
+
             let waker = state.flush(qconn)?;
             drop(state);
+
             if let Some(waker) = waker {
                 waker.wake();
             }
-            id
+            stream_id
         };
         self.send.insert(id, send);
 
@@ -312,14 +414,17 @@ impl Driver {
     ) -> Result<(), ConnectionError> {
         let id = {
             let mut state = send.lock();
-            let id = state.id();
-            qconn.stream_send(id.into(), &[], false)?;
+            let stream_id = state.id();
+
+            tracing::trace!(?stream_id, "opening unidirectional stream");
+            qconn.stream_send(stream_id.into(), &[], false)?;
+
             let waker = state.flush(qconn)?;
             drop(state);
             if let Some(waker) = waker {
                 waker.wake();
             }
-            id
+            stream_id
         };
         self.send.insert(id, send);
 
@@ -356,17 +461,15 @@ impl tokio_quiche::ApplicationOverQuic for Driver {
         &mut self.buf
     }
 
-    fn wait_for_data(
+    async fn wait_for_data(
         &mut self,
         qconn: &mut QuicheConnection,
-    ) -> impl Future<Output = Result<(), tokio_quiche::BoxError>> + Send {
-        async {
-            if let Err(e) = self.wait(qconn).await {
-                self.abort(e.clone());
-            }
-
-            Ok(())
+    ) -> Result<(), tokio_quiche::BoxError> {
+        if let Err(e) = self.wait(qconn).await {
+            self.abort(e.clone());
         }
+
+        Ok(())
     }
 
     fn process_reads(&mut self, qconn: &mut QuicheConnection) -> tokio_quiche::QuicResult<()> {

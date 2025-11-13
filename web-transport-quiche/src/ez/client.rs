@@ -2,6 +2,8 @@ use std::io;
 use std::sync::Arc;
 use tokio_quiche::settings::{Hooks, TlsCertificatePaths};
 
+use crate::ez::{ConnectionArgs, DriverArgs};
+
 use super::{
     CertificateKind, CertificatePath, Connection, ConnectionClosed, DefaultMetrics, Driver,
     DriverWakeup, Lock, Metrics, Settings,
@@ -16,7 +18,7 @@ pub struct ClientBuilder<M: Metrics = DefaultMetrics> {
 
 impl Default for ClientBuilder<DefaultMetrics> {
     fn default() -> Self {
-        Self::with_metrics(DefaultMetrics::default())
+        Self::with_metrics(DefaultMetrics)
     }
 }
 
@@ -124,7 +126,7 @@ impl<M: Metrics> ClientBuilder<M> {
             .map(|(cert, private_key, kind)| TlsCertificatePaths {
                 cert: cert.as_str(),
                 private_key: private_key.as_str(),
-                kind: kind.clone(),
+                kind: *kind,
             });
 
         if !self.settings.verify_peer {
@@ -140,39 +142,40 @@ impl<M: Metrics> ClientBuilder<M> {
         let open_bi = flume::bounded(1);
         let open_uni = flume::bounded(1);
 
-        let send_wakeup = Lock::new(DriverWakeup::default(), "send_wakeup");
-        let recv_wakeup = Lock::new(DriverWakeup::default(), "recv_wakeup");
+        let send_wakeup = Lock::new(DriverWakeup::default());
+        let recv_wakeup = Lock::new(DriverWakeup::default());
 
         let closed_local = ConnectionClosed::default();
         let closed_remote = ConnectionClosed::default();
 
-        let driver = Driver::new(
-            send_wakeup.clone(),
-            recv_wakeup.clone(),
-            accept_bi.0,
-            accept_uni.0,
-            open_bi.1,
-            open_uni.1,
-            closed_local.clone(),
-            closed_remote.clone(),
-        );
+        let driver = Driver::new(DriverArgs {
+            server: false,
+            send_wakeup: send_wakeup.clone(),
+            recv_wakeup: recv_wakeup.clone(),
+            accept_bi: accept_bi.0,
+            accept_uni: accept_uni.0,
+            open_bi: open_bi.1,
+            open_uni: open_uni.1,
+            closed_local: closed_local.clone(),
+            closed_remote: closed_remote.clone(),
+        });
 
         let conn = tokio_quiche::quic::connect_with_config(socket, Some(host), &params, driver)
             .await
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
+            .map_err(|e| io::Error::other(e.to_string()))?;
 
-        let conn = Connection::new(
-            conn,
-            false,
-            accept_bi.1,
-            accept_uni.1,
-            open_bi.0,
-            open_uni.0,
+        let conn = Connection::new(ConnectionArgs {
+            inner: conn,
+            server: false,
+            accept_bi: accept_bi.1,
+            accept_uni: accept_uni.1,
+            open_bi: open_bi.0,
+            open_uni: open_uni.0,
             send_wakeup,
             recv_wakeup,
             closed_local,
             closed_remote,
-        );
+        });
 
         Ok(conn)
     }

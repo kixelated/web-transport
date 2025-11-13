@@ -18,7 +18,7 @@ use super::{DriverWakeup, Lock, StreamError, StreamId};
 // decimal: 7308889627613622128
 const DROP_CODE: u64 = 0x656E646464726F70;
 
-pub(crate) struct SendState {
+pub(super) struct SendState {
     id: StreamId,
 
     // The amount of data that is allowed to be written.
@@ -41,6 +41,9 @@ pub(crate) struct SendState {
 
     // received SET_PRIORITY
     priority: Option<u8>,
+
+    // No more progress can be made on the stream.
+    closed: bool,
 }
 
 impl SendState {
@@ -54,6 +57,7 @@ impl SendState {
             reset: None,
             stop: None,
             priority: None,
+            closed: false,
         }
     }
 
@@ -70,13 +74,9 @@ impl SendState {
     ) -> Poll<Result<usize, StreamError>> {
         if let Some(reset) = self.reset {
             return Poll::Ready(Err(StreamError::Reset(reset)));
-        }
-
-        if let Some(stop) = self.stop {
+        } else if let Some(stop) = self.stop {
             return Poll::Ready(Err(StreamError::Stop(stop)));
-        }
-
-        if self.fin {
+        } else if self.fin {
             return Poll::Ready(Err(StreamError::Closed));
         }
 
@@ -99,13 +99,10 @@ impl SendState {
     pub fn poll_closed(&mut self, waker: &Waker) -> Poll<Result<(), StreamError>> {
         if let Some(reset) = self.reset {
             return Poll::Ready(Err(StreamError::Reset(reset)));
-        }
-
-        if let Some(stop) = self.stop {
+        } else if let Some(stop) = self.stop {
             return Poll::Ready(Err(StreamError::Stop(stop)));
-        }
-
-        if self.fin && self.queued.is_empty() {
+        } else if self.closed {
+            // self.closed means we sent the FIN already
             // TODO wait until the peer has acknowledged the fin
             return Poll::Ready(Ok(()));
         }
@@ -116,16 +113,19 @@ impl SendState {
     }
 
     pub fn flush(&mut self, qconn: &mut QuicheConnection) -> quiche::Result<Option<Waker>> {
-        if let Some(reset) = self.reset {
-            qconn.stream_shutdown(self.id.into(), quiche::Shutdown::Write, reset)?;
+        if let Some(code) = self.reset {
+            tracing::trace!(stream_id = ?self.id, code, "sending RESET_STREAM");
+            qconn.stream_shutdown(self.id.into(), quiche::Shutdown::Write, code)?;
+            self.closed = true;
             return Ok(self.blocked.take());
         }
 
-        if let Some(_) = self.stop.take() {
+        if self.stop.take().is_some() {
             return Ok(self.blocked.take());
         }
 
         if let Some(priority) = self.priority.take() {
+            tracing::trace!(stream_id = ?self.id, priority, "updating STREAM");
             qconn.stream_priority(self.id.into(), priority, true)?;
         }
 
@@ -134,16 +134,28 @@ impl SendState {
                 Ok(n) => n,
                 Err(quiche::Error::Done) => 0,
                 Err(quiche::Error::StreamStopped(code)) => {
+                    tracing::trace!(stream_id = ?self.id, code, "received STOP_SENDING");
+
                     self.stop = Some(code);
+                    self.closed = true;
                     return Ok(self.blocked.take());
                 }
-                Err(e) => return Err(e.into()),
+                Err(e) => return Err(e),
             };
+
+            tracing::trace!(
+                stream_id = ?self.id,
+                size = n,
+                "sent STREAM",
+            );
 
             self.capacity -= n;
 
             if n < chunk.len() {
-                self.queued.push_front(chunk.split_off(n));
+                // NOTE: This logic should rarely be executed because we gate based on stream capacity.
+
+                let remaining = chunk.split_off(n);
+                self.queued.push_front(remaining);
 
                 // Register a `stream_writable_next` callback when at least one byte is ready to send.
                 qconn.stream_writable(self.id.into(), 1)?;
@@ -153,17 +165,23 @@ impl SendState {
         }
 
         if self.queued.is_empty() && self.fin {
+            tracing::trace!(stream_id = ?self.id, "sending FIN");
             qconn.stream_send(self.id.into(), &[], true)?;
+
+            self.closed = true;
             return Ok(self.blocked.take());
         }
 
         self.capacity = match qconn.stream_capacity(self.id.into()) {
             Ok(capacity) => capacity,
             Err(quiche::Error::StreamStopped(code)) => {
+                tracing::trace!(stream_id = ?self.id, code, "received STOP_SENDING");
+
                 self.stop = Some(code);
+                self.closed = true;
                 return Ok(self.blocked.take());
             }
-            Err(e) => return Err(e.into()),
+            Err(e) => return Err(e),
         };
 
         if self.capacity > 0 {
@@ -172,6 +190,20 @@ impl SendState {
 
         // No write capacity available, so don't wake up the application.
         Ok(None)
+    }
+
+    pub fn is_finished(&self) -> Result<bool, StreamError> {
+        if let Some(reset) = self.reset {
+            Err(StreamError::Reset(reset))
+        } else if let Some(stop) = self.stop {
+            Err(StreamError::Stop(stop))
+        } else {
+            Ok(self.fin)
+        }
+    }
+
+    pub fn is_closed(&self) -> bool {
+        self.closed
     }
 }
 
@@ -184,7 +216,7 @@ pub struct SendStream {
 }
 
 impl SendStream {
-    pub(crate) fn new(id: StreamId, state: Lock<SendState>, wakeup: Lock<DriverWakeup>) -> Self {
+    pub(super) fn new(id: StreamId, state: Lock<SendState>, wakeup: Lock<DriverWakeup>) -> Self {
         Self { id, state, wakeup }
     }
 
@@ -243,6 +275,8 @@ impl SendStream {
     /// Mark the stream as finished.
     ///
     /// Returns an error if the stream is already closed.
+    ///
+    /// NOTE: `is_closed` won't be true until the FIN has been sent.
     pub fn finish(&mut self) -> Result<(), StreamError> {
         {
             let mut state = self.state.lock();
@@ -265,6 +299,11 @@ impl SendStream {
         Ok(())
     }
 
+    /// Returns true if `finish` has been called, or if the stream has been closed by the peer.
+    pub fn is_finished(&self) -> Result<bool, StreamError> {
+        self.state.lock().is_finished()
+    }
+
     /// Immediately close the stream via a RESET_STREAM.
     pub fn close(&mut self, code: u64) {
         self.state.lock().reset = Some(code);
@@ -282,8 +321,7 @@ impl SendStream {
     /// - We received a STOP_SENDING via [RecvStream::close]
     /// - We sent a FIN via [Self::finish]
     pub fn is_closed(&self) -> bool {
-        let state = self.state.lock();
-        state.fin || state.reset.is_some() || state.stop.is_some()
+        self.state.lock().is_closed()
     }
 
     /// Block until the stream is closed by either side.
@@ -335,7 +373,7 @@ impl AsyncWrite for SendStream {
         let mut buf = io::Cursor::new(buf);
         match ready!(self.poll_write_buf(cx, &mut buf)) {
             Ok(n) => Poll::Ready(Ok(n)),
-            Err(e) => Poll::Ready(Err(io::Error::new(io::ErrorKind::Other, e.to_string()))),
+            Err(e) => Poll::Ready(Err(io::Error::other(e.to_string()))),
         }
     }
 

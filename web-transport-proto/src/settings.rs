@@ -147,7 +147,7 @@ impl Settings {
             match Settings::decode(&mut limit) {
                 Ok(settings) => return Ok(settings),
                 Err(SettingsError::UnexpectedEnd) => continue, // More data needed.
-                Err(e) => return Err(e.into()),
+                Err(e) => return Err(e),
             };
         }
     }

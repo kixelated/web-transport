@@ -80,7 +80,7 @@ impl Capsule {
             match Self::decode(&mut limit) {
                 Ok(capsule) => return Ok(capsule),
                 Err(CapsuleError::UnexpectedEnd) => continue,
-                Err(e) => return Err(e.into()),
+                Err(e) => return Err(e),
             }
         }
     }

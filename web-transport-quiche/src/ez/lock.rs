@@ -4,67 +4,35 @@ use std::{
     sync::{Mutex, MutexGuard},
 };
 
-// Debug wrapper for Arc<Mutex<T>> that prints lock/unlock operations
-pub(crate) struct Lock<T> {
+/// Debug wrapper for Arc<Mutex<T>> that prints lock/unlock operations
+/// TODO Remove this when deadlocks are no more.
+pub(super) struct Lock<T> {
     inner: Arc<Mutex<T>>,
-    name: &'static str,
 }
 
 impl<T> Clone for Lock<T> {
     fn clone(&self) -> Self {
         Self {
             inner: self.inner.clone(),
-            name: self.name,
         }
     }
 }
 
 impl<T> Lock<T> {
-    pub fn new(value: T, name: &'static str) -> Self {
+    pub fn new(value: T) -> Self {
         Self {
             inner: Arc::new(Mutex::new(value)),
-            name,
         }
     }
 
     pub fn lock(&self) -> LockGuard<'_, T> {
-        /*
-        println!(
-            "locking {} on thread {:?}",
-            self.name,
-            std::thread::current().id()
-        );
-        */
         let guard = self.inner.lock().unwrap();
-        /*
-        println!(
-            "locked {} on thread {:?}",
-            self.name,
-            std::thread::current().id()
-        );
-        */
-        LockGuard {
-            guard,
-            name: self.name,
-        }
+        LockGuard { guard }
     }
 }
 
-pub(crate) struct LockGuard<'a, T> {
+pub(super) struct LockGuard<'a, T> {
     guard: MutexGuard<'a, T>,
-    name: &'static str,
-}
-
-impl<'a, T> Drop for LockGuard<'a, T> {
-    fn drop(&mut self) {
-        /*
-        println!(
-            "unlocking {} on thread {:?}",
-            self.name,
-            std::thread::current().id()
-        );
-        */
-    }
 }
 
 impl<'a, T> Deref for LockGuard<'a, T> {

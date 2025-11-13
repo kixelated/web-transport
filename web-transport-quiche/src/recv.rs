@@ -18,7 +18,7 @@ pub struct RecvStream {
 }
 
 impl RecvStream {
-    pub(crate) fn new(inner: ez::RecvStream) -> Self {
+    pub(super) fn new(inner: ez::RecvStream) -> Self {
         Self { inner }
     }
 
@@ -50,7 +50,7 @@ impl RecvStream {
 impl Drop for RecvStream {
     fn drop(&mut self) {
         if !self.inner.is_closed() {
-            tracing::warn!("stream dropped without `close` or `finish`");
+            tracing::warn!("stream dropped without `close` or reading all contents");
             self.inner.close(DROP_CODE)
         }
     }

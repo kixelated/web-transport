@@ -19,7 +19,7 @@ pub enum StreamError {
     Closed,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct StreamId(u64);
 
 impl StreamId {
@@ -48,7 +48,7 @@ impl StreamId {
     }
 
     pub fn increment(&mut self) -> StreamId {
-        let id = self.clone();
+        let id = *self;
         self.0 += 4;
         id
     }

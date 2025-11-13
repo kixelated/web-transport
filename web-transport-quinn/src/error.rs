@@ -264,10 +264,9 @@ pub enum ServerError {
 
 impl web_transport_trait::Error for SessionError {
     fn session_error(&self) -> Option<(u32, String)> {
-        if let SessionError::WebTransport(e) = self {
-            if let WebTransportError::ApplicationClosed(code, reason) = e {
-                return Some((*code, reason.to_string()));
-            }
+        if let SessionError::WebTransport(WebTransportError::ApplicationClosed(code, reason)) = self
+        {
+            return Some((*code, reason.to_string()));
         }
 
         None

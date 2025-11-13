@@ -109,7 +109,7 @@ impl ConnectRequest {
             match Self::decode(&mut limit) {
                 Ok(request) => return Ok(request),
                 Err(ConnectError::UnexpectedEnd) => continue,
-                Err(e) => return Err(e.into()),
+                Err(e) => return Err(e),
             }
         }
     }
@@ -186,7 +186,7 @@ impl ConnectResponse {
             match Self::decode(&mut limit) {
                 Ok(response) => return Ok(response),
                 Err(ConnectError::UnexpectedEnd) => continue,
-                Err(e) => return Err(e.into()),
+                Err(e) => return Err(e),
             }
         }
     }

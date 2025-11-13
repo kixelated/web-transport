@@ -19,7 +19,7 @@ pub struct SendStream {
 }
 
 impl SendStream {
-    pub(crate) fn new(inner: ez::SendStream) -> Self {
+    pub(super) fn new(inner: ez::SendStream) -> Self {
         Self { inner }
     }
 
@@ -60,7 +60,7 @@ impl SendStream {
 impl Drop for SendStream {
     fn drop(&mut self) {
         // Reset the stream if we dropped without calling `close` or `finish`
-        if !self.inner.is_closed() {
+        if !self.inner.is_finished().unwrap_or(true) {
             tracing::warn!("stream dropped without `close` or `finish`");
             self.inner.close(DROP_CODE)
         }

@@ -19,7 +19,7 @@ use tokio_quiche::quic::QuicheConnection;
 // decimal: 7305813194079104880
 const DROP_CODE: u64 = 0x6563766464726F70;
 
-pub(crate) struct RecvState {
+pub(super) struct RecvState {
     id: StreamId,
 
     // Data that has been read and needs to be returned to the application.
@@ -45,6 +45,9 @@ pub(crate) struct RecvState {
 
     // The size of the buffer doubles each time until it reaches the maximum size.
     buf_capacity: usize,
+
+    // Set when FIN is received, STOP_SENDING is sent, or RESET_STREAM is received.
+    closed: bool,
 }
 
 impl RecvState {
@@ -59,6 +62,7 @@ impl RecvState {
             stop: None,
             buf: BytesMut::with_capacity(64),
             buf_capacity: 64,
+            closed: false,
         }
     }
 
@@ -117,12 +121,13 @@ impl RecvState {
 
     pub fn flush(&mut self, qconn: &mut QuicheConnection) -> quiche::Result<Option<Waker>> {
         if self.reset.is_some() {
-            // TODO clean up
             return Ok(self.blocked.take());
         }
 
-        if let Some(stop) = self.stop {
-            qconn.stream_shutdown(self.id.into(), quiche::Shutdown::Read, stop)?;
+        if let Some(code) = self.stop {
+            tracing::trace!(stream_id = ?self.id, code, "sending STOP_SENDING");
+            qconn.stream_shutdown(self.id.into(), quiche::Shutdown::Read, code)?;
+            self.closed = true;
             return Ok(self.blocked.take());
         }
 
@@ -142,13 +147,23 @@ impl RecvState {
             );
 
             // Do some unsafe to avoid zeroing the buffer.
-            let buf: &mut [u8] = unsafe { std::mem::transmute(self.buf.spare_capacity_mut()) };
+            let buf: &mut [u8] = unsafe {
+                std::mem::transmute::<&mut [std::mem::MaybeUninit<u8>], &mut [u8]>(
+                    self.buf.spare_capacity_mut(),
+                )
+            };
             let n = buf.len().min(self.max);
 
             match qconn.stream_recv(self.id.into(), &mut buf[..n]) {
                 Ok((n, done)) => {
                     // Advance the buffer by the number of bytes read.
                     unsafe { self.buf.set_len(self.buf.len() + n) };
+
+                    tracing::trace!(
+                        stream_id = ?self.id,
+                        size = n,
+                        "received STREAM",
+                    );
 
                     // Then split the buffer and push the front to the queue.
                     self.queued.push_back(self.buf.split_to(n).freeze());
@@ -157,22 +172,31 @@ impl RecvState {
                     changed = true;
 
                     if done {
+                        tracing::trace!(stream_id = ?self.id, "received FIN");
+
                         self.fin = true;
+                        self.closed = true;
                         return Ok(self.blocked.take());
                     }
                 }
                 Err(quiche::Error::Done) => {
                     if qconn.stream_finished(self.id.into()) {
+                        tracing::trace!(stream_id = ?self.id, "received FIN");
+
                         self.fin = true;
+                        self.closed = true;
                         return Ok(self.blocked.take());
                     }
                     break;
                 }
                 Err(quiche::Error::StreamReset(code)) => {
+                    tracing::trace!(stream_id = ?self.id, code, "received RESET_STREAM");
+
                     self.reset = Some(code);
+                    self.closed = true;
                     return Ok(self.blocked.take());
                 }
-                Err(e) => return Err(e.into()),
+                Err(e) => return Err(e),
             }
         }
 
@@ -183,6 +207,10 @@ impl RecvState {
             Ok(None)
         }
     }
+
+    pub fn is_closed(&self) -> bool {
+        self.closed
+    }
 }
 
 pub struct RecvStream {
@@ -192,7 +220,7 @@ pub struct RecvStream {
 }
 
 impl RecvStream {
-    pub(crate) fn new(id: StreamId, state: Lock<RecvState>, wakeup: Lock<DriverWakeup>) -> Self {
+    pub(super) fn new(id: StreamId, state: Lock<RecvState>, wakeup: Lock<DriverWakeup>) -> Self {
         Self { id, state, wakeup }
     }
 
@@ -231,7 +259,9 @@ impl RecvStream {
 
     pub async fn read_buf<B: BufMut>(&mut self, buf: &mut B) -> Result<Option<usize>, StreamError> {
         match self
-            .read(unsafe { std::mem::transmute(buf.chunk_mut()) })
+            .read(unsafe {
+                std::mem::transmute::<&mut bytes::buf::UninitSlice, &mut [u8]>(buf.chunk_mut())
+            })
             .await?
         {
             Some(n) => {
@@ -244,12 +274,7 @@ impl RecvStream {
 
     pub async fn read_all(&mut self) -> Result<Bytes, StreamError> {
         let mut buf = BytesMut::new();
-        loop {
-            match self.read_buf(&mut buf).await? {
-                Some(_) => continue,
-                None => break,
-            }
-        }
+        while self.read_buf(&mut buf).await?.is_some() {}
 
         Ok(buf.freeze())
     }
@@ -271,8 +296,7 @@ impl RecvStream {
     /// - We received a RESET_STREAM via [RecvStream::close]
     /// - We received a FIN via [SendStream::finish]
     pub fn is_closed(&self) -> bool {
-        let state = self.state.lock();
-        (state.fin && state.queued.is_empty()) || state.reset.is_some() || state.stop.is_some()
+        self.state.lock().is_closed()
     }
 
     /// Block until the stream is closed by either side.
@@ -314,7 +338,7 @@ impl AsyncRead for RecvStream {
         match ready!(self.poll_read_chunk(cx.waker(), buf.remaining())) {
             Ok(Some(chunk)) => buf.put_slice(&chunk),
             Ok(None) => {}
-            Err(e) => return Poll::Ready(Err(io::Error::new(io::ErrorKind::Other, e.to_string()))),
+            Err(e) => return Poll::Ready(Err(io::Error::other(e.to_string()))),
         };
         Poll::Ready(Ok(()))
     }

@@ -45,7 +45,7 @@ struct ConnectionCloseState {
 }
 
 #[derive(Clone, Default)]
-pub(crate) struct ConnectionClosed {
+pub(super) struct ConnectionClosed {
     state: Arc<Mutex<ConnectionCloseState>>,
 }
 
@@ -57,7 +57,7 @@ impl ConnectionClosed {
         }
 
         state.err = Some(err);
-        return std::mem::take(&mut state.wakers);
+        std::mem::take(&mut state.wakers)
     }
 
     // Blocks until the connection is closed and drained.
@@ -101,6 +101,19 @@ impl Drop for ConnectionDrop {
     }
 }
 
+pub(super) struct ConnectionArgs {
+    pub inner: tokio_quiche::QuicConnection,
+    pub server: bool,
+    pub accept_bi: flume::Receiver<(SendStream, RecvStream)>,
+    pub accept_uni: flume::Receiver<RecvStream>,
+    pub open_bi: flume::Sender<(Lock<SendState>, Lock<RecvState>)>,
+    pub open_uni: flume::Sender<Lock<SendState>>,
+    pub send_wakeup: Lock<DriverWakeup>,
+    pub recv_wakeup: Lock<DriverWakeup>,
+    pub closed_local: ConnectionClosed,
+    pub closed_remote: ConnectionClosed,
+}
+
 #[derive(Clone)]
 pub struct Connection {
     inner: Arc<tokio_quiche::QuicConnection>,
@@ -125,41 +138,30 @@ pub struct Connection {
 }
 
 impl Connection {
-    pub(crate) fn new(
-        inner: tokio_quiche::QuicConnection,
-        server: bool,
-        accept_bi: flume::Receiver<(SendStream, RecvStream)>,
-        accept_uni: flume::Receiver<RecvStream>,
-        open_bi: flume::Sender<(Lock<SendState>, Lock<RecvState>)>,
-        open_uni: flume::Sender<Lock<SendState>>,
-        send_wakeup: Lock<DriverWakeup>,
-        recv_wakeup: Lock<DriverWakeup>,
-        closed_local: ConnectionClosed,
-        closed_remote: ConnectionClosed,
-    ) -> Self {
-        let next_uni = match server {
+    pub(super) fn new(args: ConnectionArgs) -> Self {
+        let next_uni = match args.server {
             true => StreamId::SERVER_UNI,
             false => StreamId::CLIENT_UNI,
         };
-        let next_bi = match server {
+        let next_bi = match args.server {
             true => StreamId::SERVER_BI,
             false => StreamId::CLIENT_BI,
         };
 
-        let drop = Arc::new(ConnectionDrop::new(closed_local.clone()));
+        let drop = Arc::new(ConnectionDrop::new(args.closed_local.clone()));
 
         Self {
-            inner: Arc::new(inner),
-            accept_bi,
-            accept_uni,
-            open_bi,
-            open_uni,
+            inner: Arc::new(args.inner),
+            accept_bi: args.accept_bi,
+            accept_uni: args.accept_uni,
+            open_bi: args.open_bi,
+            open_uni: args.open_uni,
             next_uni: Arc::new(next_uni.into()),
             next_bi: Arc::new(next_bi.into()),
-            send_wakeup,
-            recv_wakeup,
-            closed_local,
-            closed_remote,
+            send_wakeup: args.send_wakeup,
+            recv_wakeup: args.recv_wakeup,
+            closed_local: args.closed_local,
+            closed_remote: args.closed_remote,
             drop,
         }
     }
@@ -184,8 +186,8 @@ impl Connection {
     pub async fn open_bi(&self) -> Result<(SendStream, RecvStream), ConnectionError> {
         let id = StreamId::from(self.next_bi.fetch_add(4, atomic::Ordering::Relaxed));
 
-        let send = Lock::new(SendState::new(id), "SendState");
-        let recv = Lock::new(RecvState::new(id), "RecvState");
+        let send = Lock::new(SendState::new(id));
+        let recv = Lock::new(RecvState::new(id));
 
         // TODO block until the driver can create the stream
         tokio::select! {
@@ -204,7 +206,7 @@ impl Connection {
         let id = StreamId::from(self.next_uni.fetch_add(4, atomic::Ordering::Relaxed));
 
         // TODO wait until the driver ACKs
-        let state = Lock::new(SendState::new(id), "SendState");
+        let state = Lock::new(SendState::new(id));
         tokio::select! {
             Ok(_) = self.open_uni.send_async(state.clone()) => {},
             res = self.closed() => return Err(res),

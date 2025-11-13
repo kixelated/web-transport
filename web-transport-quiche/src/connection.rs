@@ -60,7 +60,7 @@ pub struct Connection {
 }
 
 impl Connection {
-    pub(crate) fn new(conn: ez::Connection, settings: h3::Settings, connect: h3::Connect) -> Self {
+    pub(super) fn new(conn: ez::Connection, settings: h3::Settings, connect: h3::Connect) -> Self {
         // The session ID is the stream ID of the CONNECT request.
         let session_id = connect.session_id();
 
@@ -356,7 +356,7 @@ pub struct SessionAccept {
 }
 
 impl SessionAccept {
-    pub(crate) fn new(conn: ez::Connection, session_id: VarInt) -> Self {
+    pub(super) fn new(conn: ez::Connection, session_id: VarInt) -> Self {
         // Create a stream that just outputs new streams, so it's easy to call from poll.
         let accept_uni = Box::pin(futures::stream::unfold(conn.clone(), |conn| async {
             Some((conn.accept_uni().await, conn))

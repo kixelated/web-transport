@@ -191,7 +191,9 @@ pub trait RecvStream: MaybeSend {
         buf: &mut B,
     ) -> impl Future<Output = Result<Option<usize>, Self::Error>> + MaybeSend {
         async move {
-            let dst = unsafe { std::mem::transmute(buf.chunk_mut()) };
+            let dst = unsafe {
+                std::mem::transmute::<&mut bytes::buf::UninitSlice, &mut [u8]>(buf.chunk_mut())
+            };
             let size = match self.read(dst).await? {
                 Some(size) => size,
                 None => return Ok(None),

@@ -9,6 +9,8 @@ use tokio_quiche::{
     socket::QuicListener,
 };
 
+use crate::ez::{ConnectionArgs, DriverArgs};
+
 use super::{
     Connection, ConnectionClosed, DefaultMetrics, Driver, DriverWakeup, Lock, Metrics, Settings,
 };
@@ -31,7 +33,7 @@ pub struct ServerBuilder<M: Metrics = DefaultMetrics, S = ServerInit> {
 
 impl Default for ServerBuilder<DefaultMetrics> {
     fn default() -> Self {
-        Self::new(DefaultMetrics::default())
+        Self::new(DefaultMetrics)
     }
 }
 
@@ -168,36 +170,37 @@ impl<M: Metrics> Server<M> {
             let open_bi = flume::bounded(1);
             let open_uni = flume::bounded(1);
 
-            let send_wakeup = Lock::new(DriverWakeup::default(), "send_wakeup");
-            let recv_wakeup = Lock::new(DriverWakeup::default(), "recv_wakeup");
+            let send_wakeup = Lock::new(DriverWakeup::default());
+            let recv_wakeup = Lock::new(DriverWakeup::default());
 
             let closed_local = ConnectionClosed::default();
             let closed_remote = ConnectionClosed::default();
 
-            let session = Driver::new(
-                send_wakeup.clone(),
-                recv_wakeup.clone(),
-                accept_bi.0,
-                accept_uni.0,
-                open_bi.1,
-                open_uni.1,
-                closed_local.clone(),
-                closed_remote.clone(),
-            );
+            let session = Driver::new(DriverArgs {
+                server: true,
+                send_wakeup: send_wakeup.clone(),
+                recv_wakeup: recv_wakeup.clone(),
+                accept_bi: accept_bi.0,
+                accept_uni: accept_uni.0,
+                open_bi: open_bi.1,
+                open_uni: open_uni.1,
+                closed_local: closed_local.clone(),
+                closed_remote: closed_remote.clone(),
+            });
 
             let inner = initial.start(session);
-            let connection = Connection::new(
+            let connection = Connection::new(ConnectionArgs {
                 inner,
-                true,
-                accept_bi.1,
-                accept_uni.1,
-                open_bi.0,
-                open_uni.0,
+                server: true,
+                accept_bi: accept_bi.1,
+                accept_uni: accept_uni.1,
+                open_bi: open_bi.0,
+                open_uni: open_uni.0,
                 send_wakeup,
                 recv_wakeup,
                 closed_local,
                 closed_remote,
-            );
+            });
 
             if accept.send(connection).await.is_err() {
                 return Ok(());
