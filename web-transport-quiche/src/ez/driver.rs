@@ -19,6 +19,10 @@ use super::{
 // decimal: 8029476563109179248
 const DROP_CODE: u64 = 0x6F6E6E6464726F70;
 
+type OpenBiResult =
+    Poll<Result<(Option<Waker>, StreamId, Lock<SendState>, Lock<RecvState>), ConnectionError>>;
+type OpenUniResult = Poll<Result<(Option<Waker>, StreamId, Lock<SendState>), ConnectionError>>;
+
 pub(super) struct DriverState {
     send: HashSet<StreamId>,
     recv: HashSet<StreamId>,
@@ -84,11 +88,7 @@ impl DriverState {
     }
 
     // Try to create the next bidirectional stream, although it may not be possible yet.
-    pub fn open_bi(
-        &mut self,
-        waker: &Waker,
-    ) -> Poll<Result<(Option<Waker>, StreamId, Lock<SendState>, Lock<RecvState>), ConnectionError>>
-    {
+    pub fn open_bi(&mut self, waker: &Waker) -> OpenBiResult {
         if let Poll::Ready(err) = self.local.poll(waker) {
             return Poll::Ready(Err(err));
         }
@@ -110,10 +110,7 @@ impl DriverState {
         Poll::Ready(Ok((wakeup, id, send, recv)))
     }
 
-    pub fn open_uni(
-        &mut self,
-        waker: &Waker,
-    ) -> Poll<Result<(Option<Waker>, StreamId, Lock<SendState>), ConnectionError>> {
+    pub fn open_uni(&mut self, waker: &Waker) -> OpenUniResult {
         if let Poll::Ready(err) = self.local.poll(waker) {
             return Poll::Ready(Err(err));
         }

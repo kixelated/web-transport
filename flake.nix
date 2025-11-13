@@ -30,11 +30,16 @@
           pkgs.pkg-config
           pkgs.glib
           pkgs.gtk3
+          pkgs.stdenv.cc.cc.lib
         ];
       in
       {
         devShells.default = pkgs.mkShell {
           packages = tools;
+
+          shellHook = ''
+            export LD_LIBRARY_PATH=${pkgs.lib.makeLibraryPath [pkgs.stdenv.cc.cc.lib]}:$LD_LIBRARY_PATH
+          '';
         };
       }
     );
