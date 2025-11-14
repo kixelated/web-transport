@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.4](https://github.com/kixelated/web-transport/compare/web-transport-ws-v0.1.3...web-transport-ws-v0.1.4) - 2025-11-14
+
+### Other
+
+- Avoid some spurious semver changes and bump the rest ([#121](https://github.com/kixelated/web-transport/pull/121))
+- Initial web-transport-quiche support ([#118](https://github.com/kixelated/web-transport/pull/118))
+
 ## [0.1.3](https://github.com/kixelated/web-transport/compare/web-transport-ws-v0.1.2...web-transport-ws-v0.1.3) - 2025-10-25
 
 ### Other
