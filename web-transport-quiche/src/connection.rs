@@ -425,7 +425,12 @@ impl SessionAccept {
 
             // Poll the list of pending streams.
             let (typ, recv) = match ready!(self.pending_uni.poll_next_unpin(cx)) {
-                Some(res) => res?,
+                Some(Ok(res)) => res,
+                Some(Err(err)) => {
+                    // Ignore the error, the stream was probably reset early.
+                    tracing::warn!(?err, "failed to decode unidirectional stream");
+                    continue;
+                }
                 None => return Poll::Pending,
             };
 
@@ -491,7 +496,12 @@ impl SessionAccept {
 
             // Poll the list of pending streams.
             let res = match ready!(self.pending_bi.poll_next_unpin(cx)) {
-                Some(res) => res?,
+                Some(Ok(res)) => res,
+                Some(Err(err)) => {
+                    // Ignore the error, the stream was probably reset early.
+                    tracing::warn!(?err, "failed to decode bidirectional stream");
+                    continue;
+                }
                 None => return Poll::Pending,
             };
 
