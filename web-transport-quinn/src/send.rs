@@ -34,7 +34,7 @@ impl SendStream {
     ///
     /// Unlike Quinn, this returns None if the code is not a valid WebTransport error code.
     /// Also unlike Quinn, this returns a SessionError, not a StoppedError, because 0-RTT is not supported.
-    pub async fn stopped(&mut self) -> Result<Option<u32>, SessionError> {
+    pub async fn stopped(&self) -> Result<Option<u32>, SessionError> {
         match self.stream.stopped().await {
             Ok(Some(code)) => Ok(web_transport_proto::error_from_http3(code.into_inner())),
             Ok(None) => Ok(None),
@@ -71,6 +71,9 @@ impl SendStream {
     }
 
     /// Mark the stream as finished, such that no more data can be written. See [`quinn::SendStream::finish`].
+    ///
+    /// WARNING: This is implicitly called on Drop, but it's a common footgun in Quinn.
+    /// If you cancel futures by dropping them you'll get incomplete writes.
     pub fn finish(&mut self) -> Result<(), ClosedStream> {
         self.stream.finish().map_err(Into::into)
     }
@@ -117,19 +120,16 @@ impl tokio::io::AsyncWrite for SendStream {
 impl web_transport_trait::SendStream for SendStream {
     type Error = WriteError;
 
-    fn set_priority(&mut self, order: i32) {
-        Self::set_priority(self, order).ok();
+    fn set_priority(&mut self, order: u8) {
+        Self::set_priority(self, order.into()).ok();
     }
 
-    fn reset(&mut self, code: u32) {
+    fn close(&mut self, code: u32) {
         Self::reset(self, code).ok();
     }
 
-    // Unlike Quinn, this will also block until the stream is closed.
-    async fn finish(&mut self) -> Result<(), Self::Error> {
-        Self::finish(self).map_err(|_| WriteError::ClosedStream)?;
-        Self::stopped(self).await?;
-        Ok(())
+    fn finish(&mut self) -> Result<(), Self::Error> {
+        Self::finish(self).map_err(|_| WriteError::ClosedStream)
     }
 
     async fn write(&mut self, buf: &[u8]) -> Result<usize, Self::Error> {
@@ -149,7 +149,10 @@ impl web_transport_trait::SendStream for SendStream {
     }
 
     async fn closed(&mut self) -> Result<(), Self::Error> {
-        self.stopped().await?;
-        Ok(())
+        // NOTE: This used to require &mut in an older version of Quinn.
+        match self.stopped().await? {
+            Some(code) => Err(WriteError::Stopped(code)),
+            None => Ok(()),
+        }
     }
 }

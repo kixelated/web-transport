@@ -1,35 +1,48 @@
-use std::{
-    fmt,
-    future::{poll_fn, Future},
-    io::Cursor,
-    ops::Deref,
-    pin::Pin,
-    sync::{Arc, Mutex},
-    task::{ready, Context, Poll},
-};
+use crate::{ez, h3, ClientError, RecvStream, SendStream, SessionError};
 
-use bytes::{Bytes, BytesMut};
-use futures::stream::{FuturesUnordered, Stream, StreamExt};
-use url::Url;
-
-use crate::{
-    ClientError, Connect, RecvStream, SendStream, SessionError, Settings, WebTransportError,
-};
-
+use futures::{ready, stream::FuturesUnordered, Stream, StreamExt};
 use web_transport_proto::{Frame, StreamUni, VarInt};
 
-/// An established WebTransport session, acting like a full QUIC connection. See [`quinn::Connection`].
+use std::{
+    future::{poll_fn, Future},
+    pin::Pin,
+    sync::{Arc, Mutex},
+    task::{Context, Poll},
+};
+
+use url::Url;
+
+// "conn" in ascii; if you see this then close(code)
+// hex: 0x636E6E6F, or 0x52E50ACE926F as an HTTP error code
+// decimal: 1668181615, or 91143682298479 as an HTTP error code
+const DROP_CODE: u64 = web_transport_proto::error_to_http3(0x636E6E6F);
+
+struct ConnectionDrop {
+    conn: ez::Connection,
+}
+
+impl Drop for ConnectionDrop {
+    fn drop(&mut self) {
+        if !self.conn.is_closed() {
+            tracing::warn!("connection dropped without calling `close`");
+            self.conn.close(DROP_CODE, "connection dropped");
+        }
+    }
+}
+
+/// An established WebTransport session, acting like a full QUIC connection.
 ///
 /// It is important to remember that WebTransport is layered on top of QUIC:
 ///   1. Each stream starts with a few bytes identifying the stream type and session ID.
-///   2. Errors codes are encoded with the session ID, so they aren't full QUIC error codes.
-///   3. Stream IDs may have gaps in them, used by HTTP/3 transparant to the application.
-///
-/// Deref is used to expose non-overloaded methods on [`quinn::Connection`].
-/// These should be safe to use with WebTransport, but file a PR if you find one that isn't.
+///   2. Error codes are encoded with the session ID, so they aren't full QUIC error codes.
+///   3. Stream IDs may have gaps in them, used by HTTP/3 transparent to the application.
 #[derive(Clone)]
-pub struct Session {
-    conn: quinn::Connection,
+pub struct Connection {
+    conn: ez::Connection,
+
+    // Dropped when all references are dropped.
+    #[allow(dead_code)]
+    drop: Arc<ConnectionDrop>,
 
     // The session ID, as determined by the stream ID of the connect request.
     session_id: Option<VarInt>,
@@ -40,18 +53,19 @@ pub struct Session {
     // Cache the headers in front of each stream we open.
     header_uni: Vec<u8>,
     header_bi: Vec<u8>,
+    #[allow(unused)]
     header_datagram: Vec<u8>,
 
     // Keep a reference to the settings and connect stream to avoid closing them until dropped.
     #[allow(dead_code)]
-    settings: Option<Arc<Settings>>,
+    settings: Option<Arc<h3::Settings>>,
 
     // The URL used to create the session.
     url: Url,
 }
 
-impl Session {
-    pub(crate) fn new(conn: quinn::Connection, settings: Settings, connect: Connect) -> Self {
+impl Connection {
+    pub(super) fn new(conn: ez::Connection, settings: h3::Settings, connect: h3::Connect) -> Self {
         // The session ID is the stream ID of the CONNECT request.
         let session_id = connect.session_id();
 
@@ -70,8 +84,11 @@ impl Session {
         // Accept logic is stateful, so use an Arc<Mutex> to share it.
         let accept = SessionAccept::new(conn.clone(), session_id);
 
+        let drop = Arc::new(ConnectionDrop { conn: conn.clone() });
+
         let this = Self {
             conn,
+            drop,
             accept: Some(Arc::new(Mutex::new(accept))),
             session_id: Some(session_id),
             header_uni,
@@ -82,52 +99,57 @@ impl Session {
         };
 
         // Run a background task to check if the connect stream is closed.
-        let mut this2 = this.clone();
-        tokio::spawn(async move {
-            let (code, reason) = this2.run_closed(connect).await;
-            // TODO We shouldn't be closing the QUIC connection with the same error.
-            this2.close(code, reason.as_bytes());
-        });
+        tokio::spawn(this.clone().run_closed(connect));
+
+        tracing::debug!(url = %this.url, "WebTransport connection established");
 
         this
     }
 
     // Keep reading from the control stream until it's closed.
-    async fn run_closed(&mut self, connect: Connect) -> (u32, String) {
+    async fn run_closed(self, connect: h3::Connect) {
         let (_send, mut recv) = connect.into_inner();
 
         loop {
             match web_transport_proto::Capsule::read(&mut recv).await {
                 Ok(web_transport_proto::Capsule::CloseWebTransportSession { code, reason }) => {
-                    return (code, reason);
+                    // TODO We shouldn't be closing the QUIC connection with the same error.
+                    // Instead, we should return it to the application.
+                    self.close(code, &reason);
+                    return;
                 }
                 Ok(web_transport_proto::Capsule::Unknown { typ, payload }) => {
-                    log::warn!("unknown capsule: type={typ} size={}", payload.len());
+                    tracing::warn!("unknown capsule: type={typ} size={}", payload.len());
                 }
                 Err(_) => {
-                    return (1, "capsule error".to_string());
+                    self.close(500, "capsule error");
+                    return;
                 }
             }
         }
     }
 
     /// Connect using an established QUIC connection if you want to create the connection yourself.
+    ///
     /// This will only work with a brand new QUIC connection using the HTTP/3 ALPN.
-    pub async fn connect(conn: quinn::Connection, url: Url) -> Result<Session, ClientError> {
+    pub async fn connect(conn: ez::Connection, url: Url) -> Result<Connection, ClientError> {
         // Perform the H3 handshake by sending/reciving SETTINGS frames.
-        let settings = Settings::connect(&conn).await?;
+        let settings = h3::Settings::connect(&conn).await?;
 
         // Send the HTTP/3 CONNECT request.
-        let connect = Connect::open(&conn, url).await?;
+        let connect = h3::Connect::open(&conn, url).await?;
 
         // Return the resulting session with a reference to the control/connect streams.
         // If either stream is closed, then the session will be closed, so we need to keep them around.
-        let session = Session::new(conn, settings, connect);
+        let session = Connection::new(conn, settings, connect);
 
         Ok(session)
     }
 
-    /// Accept a new unidirectional stream. See [`quinn::Connection::accept_uni`].
+    /// Accept a new unidirectional stream.
+    ///
+    /// Waits for a new incoming unidirectional stream from the remote peer.
+    /// Returns a [RecvStream] that can be used to read data from the stream.
     pub async fn accept_uni(&self) -> Result<RecvStream, SessionError> {
         if let Some(accept) = &self.accept {
             poll_fn(|cx| accept.lock().unwrap().poll_accept_uni(cx)).await
@@ -140,7 +162,10 @@ impl Session {
         }
     }
 
-    /// Accept a new bidirectional stream. See [`quinn::Connection::accept_bi`].
+    /// Accept a new bidirectional stream.
+    ///
+    /// Waits for a new incoming bidirectional stream from the remote peer.
+    /// Returns a ([SendStream], [RecvStream]) pair for sending and receiving data.
     pub async fn accept_bi(&self) -> Result<(SendStream, RecvStream), SessionError> {
         if let Some(accept) = &self.accept {
             poll_fn(|cx| accept.lock().unwrap().poll_accept_bi(cx)).await
@@ -153,36 +178,35 @@ impl Session {
         }
     }
 
-    /// Open a new unidirectional stream. See [`quinn::Connection::open_uni`].
+    /// Open a new unidirectional stream.
+    ///
+    /// Creates a new outgoing unidirectional stream to the remote peer.
+    /// Returns a [SendStream] that can be used to send data.
     pub async fn open_uni(&self) -> Result<SendStream, SessionError> {
         let mut send = self.conn.open_uni().await?;
 
-        // Set the stream priority to max and then write the stream header.
-        // Otherwise the application could write data with lower priority than the header, resulting in queuing.
-        // Also the header is very important for determining the session ID without reliable reset.
-        send.set_priority(i32::MAX).ok();
-        Self::write_full(&mut send, &self.header_uni).await?;
+        send.write_all(&self.header_uni)
+            .await
+            .map_err(SessionError::Header)?;
 
-        // Reset the stream priority back to the default of 0.
-        send.set_priority(0).ok();
         Ok(SendStream::new(send))
     }
 
-    /// Open a new bidirectional stream. See [`quinn::Connection::open_bi`].
+    /// Open a new bidirectional stream.
+    ///
+    /// Creates a new outgoing bidirectional stream to the remote peer.
+    /// Returns a ([SendStream], [RecvStream]) pair for sending and receiving data.
     pub async fn open_bi(&self) -> Result<(SendStream, RecvStream), SessionError> {
         let (mut send, recv) = self.conn.open_bi().await?;
 
-        // Set the stream priority to max and then write the stream header.
-        // Otherwise the application could write data with lower priority than the header, resulting in queuing.
-        // Also the header is very important for determining the session ID without reliable reset.
-        send.set_priority(i32::MAX).ok();
-        Self::write_full(&mut send, &self.header_bi).await?;
+        send.write_all(&self.header_bi)
+            .await
+            .map_err(SessionError::Header)?;
 
-        // Reset the stream priority back to the default of 0.
-        send.set_priority(0).ok();
         Ok((SendStream::new(send), RecvStream::new(recv)))
     }
 
+    /*
     /// Asynchronously receives an application datagram from the remote peer.
     ///
     /// This method is used to receive an application datagram sent by the remote
@@ -199,10 +223,9 @@ impl Session {
 
         if let Some(session_id) = self.session_id {
             // We have to check and strip the session ID from the datagram.
-            let actual_id =
-                VarInt::decode(&mut cursor).map_err(|_| WebTransportError::UnknownSession)?;
+            let actual_id = VarInt::decode(&mut cursor).map_err(|_| SessionError::Unknown)?;
             if actual_id != session_id {
-                return Err(WebTransportError::UnknownSession.into());
+                return Err(SessionError::Unknown.into());
             }
         }
 
@@ -218,8 +241,8 @@ impl Session {
     /// The data must be smaller than [`max_datagram_size`](Self::max_datagram_size).
     pub fn send_datagram(&self, data: Bytes) -> Result<(), SessionError> {
         if !self.header_datagram.is_empty() {
-            // Unfortunately, we need to allocate/copy each datagram because of the Quinn API.
-            // Pls go +1 if you care: https://github.com/quinn-rs/quinn/issues/1724
+            // Unfortunately, we need to allocate/copy each datagram because of the quiche API.
+            // Pls go +1 if you care: https://github.com/quiche-rs/quiche/issues/1724
             let mut buf = BytesMut::with_capacity(self.header_datagram.len() + data.len());
 
             // Prepend the datagram with the header indicating the session ID.
@@ -243,13 +266,14 @@ impl Session {
             .expect("datagram support is required");
         mtu.saturating_sub(self.header_datagram.len())
     }
+    */
 
-    /// Immediately close the connection with an error code and reason. See [`quinn::Connection::close`].
-    pub fn close(&self, code: u32, reason: &[u8]) {
+    /// Immediately close the connection with an error code and reason.
+    ///
+    /// The error code is a u32 with WebTransport since it shares the error space with HTTP/3.
+    pub fn close(&self, code: u32, reason: &str) {
         let code = if self.session_id.is_some() {
             web_transport_proto::error_to_http3(code)
-                .try_into()
-                .unwrap()
         } else {
             code.into()
         };
@@ -257,31 +281,22 @@ impl Session {
         self.conn.close(code, reason)
     }
 
-    /// Wait until the session is closed, returning the error. See [`quinn::Connection::closed`].
+    /// Wait until the session is closed, returning the error.
+    ///
+    /// This method will block until the connection is closed by either the remote peer or locally.
     pub async fn closed(&self) -> SessionError {
         self.conn.closed().await.into()
-    }
-
-    /// Return why the session was closed, or None if it's not closed. See [`quinn::Connection::close_reason`].
-    pub fn close_reason(&self) -> Option<SessionError> {
-        self.conn.close_reason().map(Into::into)
-    }
-
-    async fn write_full(send: &mut quinn::SendStream, buf: &[u8]) -> Result<(), SessionError> {
-        match send.write_all(buf).await {
-            Ok(_) => Ok(()),
-            Err(quinn::WriteError::ConnectionLost(err)) => Err(err.into()),
-            Err(err) => Err(WebTransportError::WriteError(err).into()),
-        }
     }
 
     /// Create a new session from a raw QUIC connection and a URL.
     ///
     /// This is used to pretend like a QUIC connection is a WebTransport session.
     /// It's a hack, but it makes it much easier to support WebTransport and raw QUIC simultaneously.
-    pub fn raw(conn: quinn::Connection, url: Url) -> Self {
+    pub fn raw(conn: ez::Connection, url: Url) -> Self {
+        let drop = Arc::new(ConnectionDrop { conn: conn.clone() });
         Self {
             conn,
+            drop,
             session_id: None,
             header_uni: Default::default(),
             header_bi: Default::default(),
@@ -292,40 +307,61 @@ impl Session {
         }
     }
 
+    /// Returns the URL used to establish this connection.
     pub fn url(&self) -> &Url {
         &self.url
     }
 }
 
-impl Deref for Session {
-    type Target = quinn::Connection;
+impl web_transport_trait::Session for Connection {
+    type SendStream = SendStream;
+    type RecvStream = RecvStream;
+    type Error = SessionError;
 
-    fn deref(&self) -> &Self::Target {
-        &self.conn
+    async fn accept_uni(&self) -> Result<RecvStream, SessionError> {
+        self.accept_uni().await
+    }
+
+    async fn accept_bi(&self) -> Result<(SendStream, RecvStream), SessionError> {
+        self.accept_bi().await
+    }
+
+    async fn open_bi(&self) -> Result<(SendStream, RecvStream), SessionError> {
+        self.open_bi().await
+    }
+
+    async fn open_uni(&self) -> Result<SendStream, SessionError> {
+        self.open_uni().await
+    }
+
+    fn send_datagram(&self, _payload: bytes::Bytes) -> Result<(), Self::Error> {
+        todo!()
+    }
+
+    async fn recv_datagram(&self) -> Result<bytes::Bytes, SessionError> {
+        todo!()
+    }
+
+    fn max_datagram_size(&self) -> usize {
+        todo!()
+    }
+
+    fn close(&self, code: u32, reason: &str) {
+        self.close(code, reason)
+    }
+
+    async fn closed(&self) -> SessionError {
+        self.closed().await
     }
 }
-
-impl fmt::Debug for Session {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.conn.fmt(f)
-    }
-}
-
-impl PartialEq for Session {
-    fn eq(&self, other: &Self) -> bool {
-        self.conn.stable_id() == other.conn.stable_id()
-    }
-}
-
-impl Eq for Session {}
 
 // Type aliases just so clippy doesn't complain about the complexity.
-type AcceptUni = dyn Stream<Item = Result<quinn::RecvStream, quinn::ConnectionError>> + Send;
-type AcceptBi = dyn Stream<Item = Result<(quinn::SendStream, quinn::RecvStream), quinn::ConnectionError>>
-    + Send;
-type PendingUni = dyn Future<Output = Result<(StreamUni, quinn::RecvStream), SessionError>> + Send;
-type PendingBi = dyn Future<Output = Result<Option<(quinn::SendStream, quinn::RecvStream)>, SessionError>>
-    + Send;
+type AcceptUni = dyn Stream<Item = Result<ez::RecvStream, ez::ConnectionError>> + Send;
+type AcceptBi =
+    dyn Stream<Item = Result<(ez::SendStream, ez::RecvStream), ez::ConnectionError>> + Send;
+type PendingUni = dyn Future<Output = Result<(StreamUni, ez::RecvStream), SessionError>> + Send;
+type PendingBi =
+    dyn Future<Output = Result<Option<(ez::SendStream, ez::RecvStream)>, SessionError>> + Send;
 
 // Logic just for accepting streams, which is annoying because of the stream header.
 pub struct SessionAccept {
@@ -333,8 +369,8 @@ pub struct SessionAccept {
 
     // We also need to keep a reference to the qpack streams if the endpoint (incorrectly) creates them.
     // Again, this is just so they don't get closed until we drop the session.
-    qpack_encoder: Option<quinn::RecvStream>,
-    qpack_decoder: Option<quinn::RecvStream>,
+    qpack_encoder: Option<ez::RecvStream>,
+    qpack_decoder: Option<ez::RecvStream>,
 
     accept_uni: Pin<Box<AcceptUni>>,
     accept_bi: Pin<Box<AcceptBi>>,
@@ -345,7 +381,7 @@ pub struct SessionAccept {
 }
 
 impl SessionAccept {
-    pub(crate) fn new(conn: quinn::Connection, session_id: VarInt) -> Self {
+    pub(super) fn new(conn: ez::Connection, session_id: VarInt) -> Self {
         // Create a stream that just outputs new streams, so it's easy to call from poll.
         let accept_uni = Box::pin(futures::stream::unfold(conn.clone(), |conn| async {
             Some((conn.accept_uni().await, conn))
@@ -407,7 +443,7 @@ impl SessionAccept {
                 }
                 _ => {
                     // ignore unknown streams
-                    log::debug!("ignoring unknown unidirectional stream: {typ:?}");
+                    tracing::debug!("ignoring unknown unidirectional stream: {typ:?}");
                 }
             }
         }
@@ -415,22 +451,22 @@ impl SessionAccept {
 
     // Reads the stream header, returning the stream type.
     async fn decode_uni(
-        mut recv: quinn::RecvStream,
+        mut recv: ez::RecvStream,
         expected_session: VarInt,
-    ) -> Result<(StreamUni, quinn::RecvStream), SessionError> {
+    ) -> Result<(StreamUni, ez::RecvStream), SessionError> {
         // Read the VarInt at the start of the stream.
         let typ = VarInt::read(&mut recv)
             .await
-            .map_err(|_| WebTransportError::UnknownStream)?;
+            .map_err(|_| SessionError::Unknown)?;
         let typ = StreamUni(typ);
 
         if typ == StreamUni::WEBTRANSPORT {
             // Read the session_id and validate it
             let session_id = VarInt::read(&mut recv)
                 .await
-                .map_err(|_| WebTransportError::UnknownSession)?;
+                .map_err(|_| SessionError::Unknown)?;
             if session_id != expected_session {
-                return Err(WebTransportError::UnknownSession.into());
+                return Err(SessionError::Unknown);
             }
         }
 
@@ -472,68 +508,26 @@ impl SessionAccept {
 
     // Reads the stream header, returning Some if it's a WebTransport stream.
     async fn decode_bi(
-        send: quinn::SendStream,
-        mut recv: quinn::RecvStream,
+        send: ez::SendStream,
+        mut recv: ez::RecvStream,
         expected_session: VarInt,
-    ) -> Result<Option<(quinn::SendStream, quinn::RecvStream)>, SessionError> {
+    ) -> Result<Option<(ez::SendStream, ez::RecvStream)>, SessionError> {
         let typ = VarInt::read(&mut recv)
             .await
-            .map_err(|_| WebTransportError::UnknownStream)?;
+            .map_err(|_| SessionError::Unknown)?;
         if Frame(typ) != Frame::WEBTRANSPORT {
-            log::debug!("ignoring unknown bidirectional stream: {typ:?}");
+            tracing::debug!("ignoring unknown bidirectional stream: {typ:?}");
             return Ok(None);
         }
 
         // Read the session ID and validate it.
         let session_id = VarInt::read(&mut recv)
             .await
-            .map_err(|_| WebTransportError::UnknownSession)?;
+            .map_err(|_| SessionError::Unknown)?;
         if session_id != expected_session {
-            return Err(WebTransportError::UnknownSession.into());
+            return Err(SessionError::Unknown);
         }
 
         Ok(Some((send, recv)))
-    }
-}
-
-impl web_transport_trait::Session for Session {
-    type SendStream = SendStream;
-    type RecvStream = RecvStream;
-    type Error = SessionError;
-
-    async fn accept_uni(&self) -> Result<Self::RecvStream, Self::Error> {
-        Self::accept_uni(self).await
-    }
-
-    async fn accept_bi(&self) -> Result<(Self::SendStream, Self::RecvStream), Self::Error> {
-        Self::accept_bi(self).await
-    }
-
-    async fn open_bi(&self) -> Result<(Self::SendStream, Self::RecvStream), Self::Error> {
-        Self::open_bi(self).await
-    }
-
-    async fn open_uni(&self) -> Result<Self::SendStream, Self::Error> {
-        Self::open_uni(self).await
-    }
-
-    fn close(&self, code: u32, reason: &str) {
-        Self::close(self, code, reason.as_bytes());
-    }
-
-    async fn closed(&self) -> Self::Error {
-        Self::closed(self).await
-    }
-
-    fn send_datagram(&self, data: Bytes) -> Result<(), Self::Error> {
-        Self::send_datagram(self, data)
-    }
-
-    async fn recv_datagram(&self) -> Result<Bytes, Self::Error> {
-        Self::read_datagram(self).await
-    }
-
-    fn max_datagram_size(&self) -> usize {
-        Self::max_datagram_size(self)
     }
 }

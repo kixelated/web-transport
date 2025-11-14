@@ -2,11 +2,13 @@ use std::{
     collections::HashMap,
     fmt::Debug,
     ops::{Deref, DerefMut},
+    sync::Arc,
 };
 
-use bytes::{Buf, BufMut};
+use bytes::{Buf, BufMut, BytesMut};
 
 use thiserror::Error;
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 use super::{Frame, StreamUni, VarInt, VarIntUnexpectedEnd};
 
@@ -96,6 +98,15 @@ pub enum SettingsError {
 
     #[error("invalid size")]
     InvalidSize,
+
+    #[error("io error: {0}")]
+    Io(Arc<std::io::Error>),
+}
+
+impl From<std::io::Error> for SettingsError {
+    fn from(err: std::io::Error) -> Self {
+        SettingsError::Io(Arc::new(err))
+    }
 }
 
 // A map of settings to values.
@@ -128,11 +139,31 @@ impl Settings {
         Ok(settings)
     }
 
+    pub async fn read<S: AsyncRead + Unpin>(stream: &mut S) -> Result<Self, SettingsError> {
+        let mut buf = Vec::new();
+
+        loop {
+            if stream.read_buf(&mut buf).await? == 0 {
+                return Err(SettingsError::UnexpectedEnd);
+            }
+
+            // Look at the buffer we've already read.
+            let mut limit = std::io::Cursor::new(&buf);
+
+            match Settings::decode(&mut limit) {
+                Ok(settings) => return Ok(settings),
+                Err(SettingsError::UnexpectedEnd) => continue, // More data needed.
+                Err(e) => return Err(e),
+            };
+        }
+    }
+
     pub fn encode<B: BufMut>(&self, buf: &mut B) {
         StreamUni::CONTROL.encode(buf);
         Frame::SETTINGS.encode(buf);
 
         // Encode to a temporary buffer so we can learn the length.
+        // TODO avoid doing this, just use a fixed size varint.
         let mut tmp = Vec::new();
         for (id, value) in &self.0 {
             id.encode(&mut tmp);
@@ -141,6 +172,14 @@ impl Settings {
 
         VarInt::from_u32(tmp.len() as u32).encode(buf);
         buf.put_slice(&tmp);
+    }
+
+    pub async fn write<S: AsyncWrite + Unpin>(&self, stream: &mut S) -> Result<(), SettingsError> {
+        // TODO avoid allocating to the heap
+        let mut buf = BytesMut::new();
+        self.encode(&mut buf);
+        stream.write_all_buf(&mut buf).await?;
+        Ok(())
     }
 
     pub fn enable_webtransport(&mut self, max_sessions: u32) {

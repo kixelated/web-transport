@@ -463,15 +463,13 @@ impl generic::Session for Session {
             .ok();
     }
 
-    async fn closed(&self) -> Result<(), Self::Error> {
+    async fn closed(&self) -> Self::Error {
         let mut closed = self.closed.subscribe();
-        let err = closed
+        closed
             .wait_for(|err| err.is_some())
             .await
             .map(|e| e.clone().unwrap_or(Error::Closed))
-            .unwrap_or(Error::Closed);
-
-        Err(err)
+            .unwrap_or(Error::Closed)
     }
 
     fn send_datagram(&self, _payload: Bytes) -> Result<(), Self::Error> {
@@ -523,7 +521,7 @@ impl SendStream {
 impl Drop for SendStream {
     fn drop(&mut self) {
         if !self.fin && self.closed.is_none() {
-            generic::SendStream::reset(self, 0);
+            generic::SendStream::close(self, 0);
         }
     }
 }
@@ -568,11 +566,11 @@ impl generic::SendStream for SendStream {
         }
     }
 
-    fn set_priority(&mut self, _priority: i32) {
+    fn set_priority(&mut self, _priority: u8) {
         // Priority not implemented in this version
     }
 
-    fn reset(&mut self, code: u32) {
+    fn close(&mut self, code: u32) {
         if self.fin || self.closed.is_some() {
             return;
         }
@@ -584,7 +582,7 @@ impl generic::SendStream for SendStream {
         self.closed = Some(Error::StreamReset(code));
     }
 
-    async fn finish(&mut self) -> Result<(), Self::Error> {
+    fn finish(&mut self) -> Result<(), Self::Error> {
         if let Some(error) = &self.closed {
             return Err(error.clone());
         }
@@ -595,10 +593,15 @@ impl generic::SendStream for SendStream {
             fin: true,
         };
 
-        self.outbound
-            .send(frame.into())
-            .await
-            .map_err(|_| Error::Closed)?;
+        if let Err(e) = self.outbound.try_send(frame.into()) {
+            // This is a sync function so we need to spawn a task if we're blocked on sending the frame.
+            // Thanks, I hate it.
+            let outbound = self.outbound.clone();
+            tokio::spawn(async move {
+                outbound.send(e.into_inner()).await.ok();
+            });
+        }
+
         self.fin = true;
 
         Ok(())
@@ -650,7 +653,7 @@ impl RecvStream {
 impl Drop for RecvStream {
     fn drop(&mut self) {
         if !self.fin && self.closed.is_none() {
-            generic::RecvStream::stop(self, 0);
+            generic::RecvStream::close(self, 0);
         }
     }
 }
@@ -711,7 +714,7 @@ impl generic::RecvStream for RecvStream {
         self.read_buf(&mut buf).await
     }
 
-    fn stop(&mut self, code: u32) {
+    fn close(&mut self, code: u32) {
         let code = VarInt::from(code);
         let frame = StopSending { id: self.id, code };
 

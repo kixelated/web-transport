@@ -14,7 +14,7 @@ async fn main() -> anyhow::Result<()> {
     uni_stream
         .write(b"Hello from unidirectional stream!")
         .await?;
-    uni_stream.finish().await?;
+    uni_stream.finish()?;
     println!("Sent message on unidirectional stream");
 
     // Receive back the same message
@@ -33,7 +33,7 @@ async fn main() -> anyhow::Result<()> {
     let text = String::from_utf8_lossy(&response);
     println!("Received: {text}");
 
-    send.finish().await?;
+    send.finish()?;
 
     println!("\nClient shutting down...");
     Ok(())

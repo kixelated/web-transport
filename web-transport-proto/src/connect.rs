@@ -1,6 +1,7 @@
-use std::str::FromStr;
+use std::{str::FromStr, sync::Arc};
 
-use bytes::{Buf, BufMut};
+use bytes::{Buf, BufMut, BytesMut};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use url::Url;
 
 use super::{qpack, Frame, VarInt};
@@ -48,6 +49,15 @@ pub enum ConnectError {
 
     #[error("non-200 status: {0:?}")]
     ErrorStatus(http::StatusCode),
+
+    #[error("io error: {0}")]
+    Io(Arc<std::io::Error>),
+}
+
+impl From<std::io::Error> for ConnectError {
+    fn from(err: std::io::Error) -> Self {
+        ConnectError::Io(Arc::new(err))
+    }
 }
 
 #[derive(Debug)]
@@ -97,6 +107,22 @@ impl ConnectRequest {
         Ok(Self { url })
     }
 
+    pub async fn read<S: AsyncRead + Unpin>(stream: &mut S) -> Result<Self, ConnectError> {
+        let mut buf = Vec::new();
+        loop {
+            if stream.read_buf(&mut buf).await? == 0 {
+                return Err(ConnectError::UnexpectedEnd);
+            }
+
+            let mut limit = std::io::Cursor::new(&buf);
+            match Self::decode(&mut limit) {
+                Ok(request) => return Ok(request),
+                Err(ConnectError::UnexpectedEnd) => continue,
+                Err(e) => return Err(e),
+            }
+        }
+    }
+
     pub fn encode<B: BufMut>(&self, buf: &mut B) {
         let mut headers = qpack::Headers::default();
         headers.set(":method", "CONNECT");
@@ -117,6 +143,13 @@ impl ConnectRequest {
         Frame::HEADERS.encode(buf);
         size.encode(buf);
         buf.put_slice(&tmp);
+    }
+
+    pub async fn write<S: AsyncWrite + Unpin>(&self, stream: &mut S) -> Result<(), ConnectError> {
+        let mut buf = BytesMut::new();
+        self.encode(&mut buf);
+        stream.write_all_buf(&mut buf).await?;
+        Ok(())
     }
 }
 
@@ -148,6 +181,22 @@ impl ConnectResponse {
         Ok(Self { status })
     }
 
+    pub async fn read<S: AsyncRead + Unpin>(stream: &mut S) -> Result<Self, ConnectError> {
+        let mut buf = Vec::new();
+        loop {
+            if stream.read_buf(&mut buf).await? == 0 {
+                return Err(ConnectError::UnexpectedEnd);
+            }
+
+            let mut limit = std::io::Cursor::new(&buf);
+            match Self::decode(&mut limit) {
+                Ok(response) => return Ok(response),
+                Err(ConnectError::UnexpectedEnd) => continue,
+                Err(e) => return Err(e),
+            }
+        }
+    }
+
     pub fn encode<B: BufMut>(&self, buf: &mut B) {
         let mut headers = qpack::Headers::default();
         headers.set(":status", self.status.as_str());
@@ -161,5 +210,12 @@ impl ConnectResponse {
         Frame::HEADERS.encode(buf);
         size.encode(buf);
         buf.put_slice(&tmp);
+    }
+
+    pub async fn write<S: AsyncWrite + Unpin>(&self, stream: &mut S) -> Result<(), ConnectError> {
+        let mut buf = BytesMut::new();
+        self.encode(&mut buf);
+        stream.write_all_buf(&mut buf).await?;
+        Ok(())
     }
 }

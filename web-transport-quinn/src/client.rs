@@ -12,11 +12,15 @@ use crate::crypto;
 use crate::ALPN;
 use crate::{ClientError, Session};
 
-// Copies the Web options, hiding the actual implementation.
-/// Allows specifying a class of congestion control algorithm.
+/// Congestion control algorithm to use for the connection.
+///
+/// Different algorithms make different tradeoffs between throughput and latency.
 pub enum CongestionControl {
+    /// Use the default congestion control algorithm (typically CUBIC).
     Default,
+    /// Optimize for throughput (typically CUBIC).
     Throughput,
+    /// Optimize for low latency (typically BBR).
     LowLatency,
 }
 

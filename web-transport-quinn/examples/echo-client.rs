@@ -78,5 +78,8 @@ async fn main() -> anyhow::Result<()> {
     let msg = recv.read_to_end(1024).await?;
     log::info!("recv: {}", String::from_utf8_lossy(&msg));
 
+    session.close(42069, b"bye");
+    session.closed().await;
+
     Ok(())
 }

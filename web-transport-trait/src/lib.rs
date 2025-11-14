@@ -9,8 +9,15 @@ use bytes::{Buf, BufMut, Bytes, BytesMut};
 ///
 /// Implementations must be Send + Sync + 'static for use across async boundaries.
 pub trait Error: std::error::Error + MaybeSend + MaybeSync + 'static {
-    // TODO: Add error code support when stabilized
-    // fn code(&self) -> u32;
+    /// Returns the error code and reason if this was an application error.
+    ///
+    /// NOTE: Reason reasons are technically bytes on the wire, but we convert to a String for convenience.
+    fn session_error(&self) -> Option<(u32, String)>;
+
+    /// Returns the error code if this was a stream error.
+    fn stream_error(&self) -> Option<u32> {
+        None
+    }
 }
 
 /// A WebTransport Session, able to accept/create streams and send/recv datagrams.
@@ -59,8 +66,8 @@ pub trait Session: Clone + MaybeSend + MaybeSync + 'static {
     /// Close the connection immediately with a code and reason.
     fn close(&self, code: u32, reason: &str);
 
-    /// Block until the connection is closed.
-    fn closed(&self) -> impl Future<Output = Result<(), Self::Error>> + MaybeSend;
+    /// Block until the connection is closed by either side.
+    fn closed(&self) -> impl Future<Output = Self::Error> + MaybeSend;
 }
 
 /// An outgoing stream of bytes to the peer.
@@ -87,10 +94,7 @@ pub trait SendStream: MaybeSend {
         }
     }
 
-    /// Write the given Bytes chunk to the stream.
-    ///
-    /// NOTE: Bytes implements Buf, so write_buf also works.
-    /// This is primarily implemented for symmetry.
+    /// Write the entire [Bytes] chunk to the stream, potentially avoiding a copy.
     fn write_chunk(
         &mut self,
         chunk: Bytes,
@@ -133,17 +137,33 @@ pub trait SendStream: MaybeSend {
     /// Set the stream's priority.
     ///
     /// Streams with lower values will be sent first, but are not guaranteed to arrive first.
-    fn set_priority(&mut self, order: i32);
+    fn set_priority(&mut self, order: u8);
 
-    /// Send an immediate reset code, closing the stream.
-    fn reset(&mut self, code: u32);
+    /// Mark the stream as finished, erroring on any future writes.
+    ///
+    /// [SendStream::close] can still be called to abandon any queued data.
+    /// [SendStream::closed] should return when the FIN is acknowledged by the peer.
+    ///
+    /// NOTE: Quinn implicitly calls this on Drop, but it's a common footgun.
+    /// Implementations SHOULD [SendStream::close] on Drop instead.
+    fn finish(&mut self) -> Result<(), Self::Error>;
 
-    /// Mark the stream as finished and wait for all data to be acknowledged.
-    fn finish(&mut self) -> impl Future<Output = Result<(), Self::Error>> + MaybeSend;
+    /// Immediately closes the stream and discards any remaining data.
+    ///
+    /// This translates into a RESET_STREAM QUIC code.
+    /// The peer may not receive the reset code if the stream is already closed.
+    fn close(&mut self, code: u32);
 
     /// Block until the stream is closed by either side.
     ///
-    // TODO: This should be &self but that requires modifying quinn.
+    /// This includes:
+    /// - We sent a RESET_STREAM via [SendStream::close]
+    /// - We received a STOP_SENDING via [RecvStream::close]
+    /// - A FIN is acknowledged by the peer via [SendStream::finish]
+    ///
+    /// Some implementations do not support FIN acknowledgement, in which case this will block until the FIN is sent.
+    ///
+    /// NOTE: This takes a &mut to match Quinn and to simplify the implementation.
     fn closed(&mut self) -> impl Future<Output = Result<(), Self::Error>> + MaybeSend;
 }
 
@@ -171,9 +191,9 @@ pub trait RecvStream: MaybeSend {
         buf: &mut B,
     ) -> impl Future<Output = Result<Option<usize>, Self::Error>> + MaybeSend {
         async move {
-            let dst = buf.chunk_mut();
-            let dst = unsafe { &mut *(dst as *mut _ as *mut [u8]) };
-
+            let dst = unsafe {
+                std::mem::transmute::<&mut bytes::buf::UninitSlice, &mut [u8]>(buf.chunk_mut())
+            };
             let size = match self.read(dst).await? {
                 Some(size) => size,
                 None => return Ok(None),
@@ -201,12 +221,18 @@ pub trait RecvStream: MaybeSend {
         }
     }
 
-    /// Send a `STOP_SENDING` QUIC code.
-    fn stop(&mut self, code: u32);
-
-    /// Block until the stream has been closed and return the error code, if any.
+    /// Send a `STOP_SENDING` QUIC code, informing the peer that no more data will be read.
     ///
-    /// This should be &self but that requires modifying quinn.
+    /// An implementation MUST do this on Drop otherwise flow control will be leaked.
+    /// Call this method manually if you want to specify a code yourself.
+    fn close(&mut self, code: u32);
+
+    /// Block until the stream has been closed by either side.
+    ///
+    /// This includes:
+    /// - We received a RESET_STREAM via [SendStream::close]
+    /// - We sent a STOP_SENDING via [RecvStream::close]
+    /// - We received a FIN via [SendStream::finish] and read all data.
     fn closed(&mut self) -> impl Future<Output = Result<(), Self::Error>> + MaybeSend;
 
     /// A helper to keep reading until the stream is closed.
