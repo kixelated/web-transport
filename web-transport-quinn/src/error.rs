@@ -43,7 +43,7 @@ pub enum SessionError {
     ConnectionError(quinn::ConnectionError),
 
     #[error("webtransport error: {0}")]
-    WebTransport(#[from] WebTransportError),
+    WebTransportError(#[from] WebTransportError),
 
     #[error("send datagram error: {0}")]
     SendDatagramError(#[from] quinn::SendDatagramError),
@@ -54,7 +54,7 @@ impl From<quinn::ConnectionError> for SessionError {
         match &e {
             quinn::ConnectionError::ApplicationClosed(close) => {
                 match web_transport_proto::error_from_http3(close.error_code.into_inner()) {
-                    Some(code) => WebTransportError::ApplicationClosed(
+                    Some(code) => WebTransportError::Closed(
                         code,
                         String::from_utf8_lossy(&close.reason).into_owned(),
                     )
@@ -62,7 +62,6 @@ impl From<quinn::ConnectionError> for SessionError {
                     None => SessionError::ConnectionError(e),
                 }
             }
-            quinn::ConnectionError::LocallyClosed => WebTransportError::LocallyClosed.into(),
             _ => SessionError::ConnectionError(e),
         }
     }
@@ -71,17 +70,11 @@ impl From<quinn::ConnectionError> for SessionError {
 /// An error that can occur when reading/writing the WebTransport stream header.
 #[derive(Clone, Error, Debug)]
 pub enum WebTransportError {
-    #[error("application closed: code={0} reason={1}")]
-    ApplicationClosed(u32, String),
-
-    #[error("locally closed")]
-    LocallyClosed,
+    #[error("closed: code={0} reason={1}")]
+    Closed(u32, String),
 
     #[error("unknown session")]
     UnknownSession,
-
-    #[error("unknown stream")]
-    UnknownStream,
 
     #[error("read error: {0}")]
     ReadError(#[from] quinn::ReadExactError),
@@ -264,8 +257,7 @@ pub enum ServerError {
 
 impl web_transport_trait::Error for SessionError {
     fn session_error(&self) -> Option<(u32, String)> {
-        if let SessionError::WebTransport(WebTransportError::ApplicationClosed(code, reason)) = self
-        {
+        if let SessionError::WebTransportError(WebTransportError::Closed(code, reason)) = self {
             return Some((*code, reason.to_string()));
         }
 

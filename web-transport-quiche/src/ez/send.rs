@@ -5,7 +5,7 @@ use std::{
     pin::Pin,
     task::{ready, Context, Poll, Waker},
 };
-use tokio_quiche::quiche;
+use tokio_quiche::quiche::{self};
 
 use bytes::{Buf, Bytes};
 use tokio::io::AsyncWrite;
