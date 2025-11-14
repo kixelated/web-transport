@@ -521,7 +521,7 @@ impl SendStream {
 impl Drop for SendStream {
     fn drop(&mut self) {
         if !self.fin && self.closed.is_none() {
-            generic::SendStream::close(self, 0);
+            generic::SendStream::reset(self, 0);
         }
     }
 }
@@ -570,7 +570,7 @@ impl generic::SendStream for SendStream {
         // Priority not implemented in this version
     }
 
-    fn close(&mut self, code: u32) {
+    fn reset(&mut self, code: u32) {
         if self.fin || self.closed.is_some() {
             return;
         }
@@ -653,7 +653,7 @@ impl RecvStream {
 impl Drop for RecvStream {
     fn drop(&mut self) {
         if !self.fin && self.closed.is_none() {
-            generic::RecvStream::close(self, 0);
+            generic::RecvStream::stop(self, 0);
         }
     }
 }
@@ -714,7 +714,7 @@ impl generic::RecvStream for RecvStream {
         self.read_buf(&mut buf).await
     }
 
-    fn close(&mut self, code: u32) {
+    fn stop(&mut self, code: u32) {
         let code = VarInt::from(code);
         let frame = StopSending { id: self.id, code };
 

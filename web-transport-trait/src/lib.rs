@@ -141,24 +141,24 @@ pub trait SendStream: MaybeSend {
 
     /// Mark the stream as finished, erroring on any future writes.
     ///
-    /// [SendStream::close] can still be called to abandon any queued data.
+    /// [SendStream::reset] can still be called to abandon any queued data.
     /// [SendStream::closed] should return when the FIN is acknowledged by the peer.
     ///
     /// NOTE: Quinn implicitly calls this on Drop, but it's a common footgun.
-    /// Implementations SHOULD [SendStream::close] on Drop instead.
+    /// Implementations SHOULD [SendStream::reset] on Drop instead.
     fn finish(&mut self) -> Result<(), Self::Error>;
 
     /// Immediately closes the stream and discards any remaining data.
     ///
     /// This translates into a RESET_STREAM QUIC code.
     /// The peer may not receive the reset code if the stream is already closed.
-    fn close(&mut self, code: u32);
+    fn reset(&mut self, code: u32);
 
     /// Block until the stream is closed by either side.
     ///
     /// This includes:
-    /// - We sent a RESET_STREAM via [SendStream::close]
-    /// - We received a STOP_SENDING via [RecvStream::close]
+    /// - We sent a RESET_STREAM via [SendStream::reset]
+    /// - We received a STOP_SENDING via [RecvStream::stop]
     /// - A FIN is acknowledged by the peer via [SendStream::finish]
     ///
     /// Some implementations do not support FIN acknowledgement, in which case this will block until the FIN is sent.
@@ -225,13 +225,13 @@ pub trait RecvStream: MaybeSend {
     ///
     /// An implementation MUST do this on Drop otherwise flow control will be leaked.
     /// Call this method manually if you want to specify a code yourself.
-    fn close(&mut self, code: u32);
+    fn stop(&mut self, code: u32);
 
     /// Block until the stream has been closed by either side.
     ///
     /// This includes:
-    /// - We received a RESET_STREAM via [SendStream::close]
-    /// - We sent a STOP_SENDING via [RecvStream::close]
+    /// - We received a RESET_STREAM via [SendStream::reset]
+    /// - We sent a STOP_SENDING via [RecvStream::stop]
     /// - We received a FIN via [SendStream::finish] and read all data.
     fn closed(&mut self) -> impl Future<Output = Result<(), Self::Error>> + MaybeSend;
 

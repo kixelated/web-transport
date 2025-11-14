@@ -124,7 +124,7 @@ impl web_transport_trait::SendStream for SendStream {
         Self::set_priority(self, order.into()).ok();
     }
 
-    fn close(&mut self, code: u32) {
+    fn reset(&mut self, code: u32) {
         Self::reset(self, code).ok();
     }
 
