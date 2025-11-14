@@ -30,8 +30,8 @@
           pkgs.pkg-config
           pkgs.glib
           pkgs.gtk3
-          pkgs.stdenv.cc.cc.lib
-          pkgs.libffi
+          # Required to compile boringssl (via bindgen loading libclang)
+          pkgs.llvmPackages.libclang.lib
         ];
       in
       {
@@ -39,7 +39,7 @@
           packages = tools;
 
           shellHook = ''
-            export LD_LIBRARY_PATH=${pkgs.lib.makeLibraryPath [pkgs.stdenv.cc.cc.lib pkgs.libffi]}:$LD_LIBRARY_PATH
+            export LD_LIBRARY_PATH=${pkgs.lib.makeLibraryPath [pkgs.llvmPackages.libclang.lib]}:$LD_LIBRARY_PATH
           '';
         };
       }
