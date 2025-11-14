@@ -69,6 +69,7 @@ impl DriverState {
         self.local.is_closed() || self.remote.is_closed()
     }
 
+    #[must_use = "wake the driver"]
     pub fn send(&mut self, stream_id: StreamId) -> Option<Waker> {
         if !self.send.insert(stream_id) {
             return None;
@@ -78,6 +79,7 @@ impl DriverState {
         self.waker.take()
     }
 
+    #[must_use = "wake the driver"]
     pub fn recv(&mut self, stream_id: StreamId) -> Option<Waker> {
         if !self.recv.insert(stream_id) {
             return None;
@@ -217,8 +219,7 @@ impl Driver {
         tracing::trace!(?stream_id, "accepting bidirectional stream");
 
         let mut state = RecvState::new(stream_id);
-        let waker = state.flush(qconn)?;
-        assert!(waker.is_none());
+        state.flush(qconn)?;
 
         let state = Lock::new(state);
 
@@ -226,8 +227,7 @@ impl Driver {
         let recv = RecvStream::new(stream_id, state.clone(), self.state.clone());
 
         let mut state = SendState::new(stream_id);
-        let waker = state.flush(qconn)?;
-        assert!(waker.is_none());
+        state.flush(qconn)?;
 
         let state = Lock::new(state);
         self.send.insert(stream_id, state.clone());
@@ -248,8 +248,7 @@ impl Driver {
         tracing::trace!(?stream_id, "accepting unidirectional stream");
 
         let mut state = RecvState::new(stream_id);
-        let waker = state.flush(qconn)?;
-        assert!(waker.is_none());
+        state.flush(qconn)?;
 
         let state = Lock::new(state);
         self.recv.insert(stream_id, state.clone());

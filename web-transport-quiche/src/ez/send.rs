@@ -111,6 +111,7 @@ impl SendState {
         Poll::Pending
     }
 
+    #[must_use = "wake the driver"]
     pub fn flush(&mut self, qconn: &mut QuicheConnection) -> quiche::Result<Option<Waker>> {
         if let Some(code) = self.reset {
             tracing::trace!(stream_id = ?self.id, code, "sending RESET_STREAM");

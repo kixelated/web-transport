@@ -18,5 +18,5 @@ http = "1"
 thiserror = "2"
 
 # Just for AsyncRead and AsyncWrite traits
-tokio = { version = "1", default-features = false }
+tokio = { version = "1", default-features = false, features = ["io-util"] }
 url = "2"

@@ -17,6 +17,9 @@ pub enum ClientError {
 
     #[error("connect error: {0}")]
     Connect(#[from] h3::ConnectError),
+
+    #[error("invalid URL: {0}")]
+    InvalidUrl(String),
 }
 
 impl From<std::io::Error> for ClientError {
@@ -78,7 +81,11 @@ impl<M: Metrics> ClientBuilder<M> {
     /// This takes ownership because the underlying quiche implementation doesn't support reusing the same socket.
     pub async fn connect(self, url: Url) -> Result<Connection, ClientError> {
         let port = url.port().unwrap_or(443);
-        let host = url.host().unwrap().to_string();
+
+        let host = match url.host() {
+            Some(host) => host.to_string(),
+            None => return Err(ClientError::InvalidUrl(url.to_string())),
+        };
 
         let conn = self.0.connect(&host, port).await?;
 

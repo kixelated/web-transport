@@ -117,6 +117,7 @@ impl RecvState {
         }
     }
 
+    #[must_use = "wake the driver"]
     pub fn flush(&mut self, qconn: &mut QuicheConnection) -> quiche::Result<Option<Waker>> {
         if self.reset.is_some() {
             return Ok(self.blocked.take());
