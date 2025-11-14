@@ -48,9 +48,6 @@ impl SendStream {
     }
 
     /// Mark the stream as finished, such that no more data can be written.
-    ///
-    /// **WARNING**: This is implicitly called on Drop, but it's a common footgun.
-    /// If you cancel futures by dropping them you'll get incomplete writes.
     pub fn finish(&mut self) -> Result<(), StreamError> {
         self.inner.finish().map_err(Into::into)
     }
@@ -65,9 +62,9 @@ impl SendStream {
     /// Abruptly reset the stream with the provided error code.
     ///
     /// This is a u32 with WebTransport because it shares the error space with HTTP/3.
-    pub fn close(&mut self, code: u32) {
+    pub fn reset(&mut self, code: u32) {
         let code = web_transport_proto::error_to_http3(code);
-        self.inner.close(code)
+        self.inner.reset(code)
     }
 
     /// Wait until the stream has been stopped and return the error code.
@@ -78,10 +75,10 @@ impl SendStream {
 
 impl Drop for SendStream {
     fn drop(&mut self) {
-        // Reset the stream if we dropped without calling `close` or `finish`
+        // Reset the stream if we dropped without calling `close` or `reset`
         if !self.inner.is_finished().unwrap_or(true) {
-            tracing::warn!("stream dropped without `close` or `finish`");
-            self.inner.close(DROP_CODE)
+            tracing::warn!("stream dropped without `close` or `reset`");
+            self.inner.reset(DROP_CODE)
         }
     }
 }
@@ -121,8 +118,8 @@ impl web_transport_trait::SendStream for SendStream {
         self.set_priority(order)
     }
 
-    fn close(&mut self, code: u32) {
-        self.close(code)
+    fn reset(&mut self, code: u32) {
+        self.reset(code)
     }
 
     fn finish(&mut self) -> Result<(), Self::Error> {

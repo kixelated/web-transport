@@ -426,7 +426,7 @@ impl SessionAccept {
         // Read the VarInt at the start of the stream.
         let typ = VarInt::read(&mut recv)
             .await
-            .map_err(|_| WebTransportError::UnknownStream)?;
+            .map_err(|_| WebTransportError::UnknownSession)?;
         let typ = StreamUni(typ);
 
         if typ == StreamUni::WEBTRANSPORT {
@@ -488,7 +488,7 @@ impl SessionAccept {
     ) -> Result<Option<(quinn::SendStream, quinn::RecvStream)>, SessionError> {
         let typ = VarInt::read(&mut recv)
             .await
-            .map_err(|_| WebTransportError::UnknownStream)?;
+            .map_err(|_| WebTransportError::UnknownSession)?;
         if Frame(typ) != Frame::WEBTRANSPORT {
             log::debug!("ignoring unknown bidirectional stream: {typ:?}");
             return Ok(None);

@@ -102,7 +102,7 @@ impl tokio::io::AsyncRead for RecvStream {
 impl web_transport_trait::RecvStream for RecvStream {
     type Error = ReadError;
 
-    fn close(&mut self, code: u32) {
+    fn stop(&mut self, code: u32) {
         Self::stop(self, code).ok();
     }
 

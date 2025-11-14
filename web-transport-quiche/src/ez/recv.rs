@@ -301,7 +301,7 @@ impl RecvStream {
     /// Tell the other end to stop sending data with the given error code.
     ///
     /// This sends a STOP_SENDING frame to the remote.
-    pub fn close(&mut self, code: u64) {
+    pub fn stop(&mut self, code: u64) {
         self.state.lock().stop = Some(code);
 
         let waker = self.driver.lock().recv(self.id);
@@ -313,7 +313,7 @@ impl RecvStream {
     /// Returns true if the stream is closed by either side.
     ///
     /// This includes:
-    /// - We sent a STOP_SENDING via [RecvStream::close]
+    /// - We sent a STOP_SENDING via [RecvStream::stop]
     /// - We received a RESET_STREAM from the remote
     /// - We received a FIN from the remote
     pub fn is_closed(&self) -> bool {
@@ -335,7 +335,7 @@ impl RecvStream {
     /// Wait until the stream is closed by either side.
     ///
     /// This includes:
-    /// - We sent a STOP_SENDING via [RecvStream::close]
+    /// - We sent a STOP_SENDING via [RecvStream::stop]
     /// - We received a RESET_STREAM from the remote
     /// - We received a FIN from the remote
     ///

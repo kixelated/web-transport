@@ -5,7 +5,7 @@ use std::{
     pin::Pin,
     task::{ready, Context, Poll, Waker},
 };
-use tokio_quiche::quiche;
+use tokio_quiche::quiche::{self};
 
 use bytes::{Buf, Bytes};
 use tokio::io::AsyncWrite;
@@ -281,8 +281,9 @@ impl SendStream {
 
     /// Mark the stream as finished, such that no more data can be written.
     ///
-    /// **WARN**: If this is not called explicitly, [SendStream::close] will be called on [Drop].
-    /// **NOTE**: [SendStream::closed] will block until the FIN has been sent.
+    /// [SendStream::closed] will block until the FIN has been sent.
+    ///
+    /// **WARN**: If this is not called explicitly, [SendStream::reset] will be called on [Drop].
     pub fn finish(&mut self) -> Result<(), StreamError> {
         {
             let mut state = self.state.lock();
@@ -313,7 +314,7 @@ impl SendStream {
     /// Abruptly reset the stream with the provided error code.
     ///
     /// This sends a RESET_STREAM frame to the remote.
-    pub fn close(&mut self, code: u64) {
+    pub fn reset(&mut self, code: u64) {
         self.state.lock().reset = Some(code);
 
         let waker = self.driver.lock().send(self.id);
@@ -325,8 +326,8 @@ impl SendStream {
     /// Returns true if the stream is closed by either side.
     ///
     /// This includes:
-    /// - We sent a RESET_STREAM via [SendStream::close]
-    /// - We received a STOP_SENDING via [RecvStream::close]
+    /// - We sent a RESET_STREAM via [SendStream::reset]
+    /// - We received a STOP_SENDING via [super::RecvStream::stop]
     /// - We sent a FIN via [SendStream::finish]
     pub fn is_closed(&self) -> bool {
         self.state.lock().is_closed()
@@ -347,8 +348,8 @@ impl SendStream {
     /// Wait until the stream is closed by either side.
     ///
     /// This includes:
-    /// - We sent a RESET_STREAM via [SendStream::close]
-    /// - We received a STOP_SENDING via [RecvStream::close]
+    /// - We sent a RESET_STREAM via [SendStream::reset]
+    /// - We received a STOP_SENDING via [super::RecvStream::stop]
     /// - We sent a FIN via [SendStream::finish]
     ///
     /// Note: This takes `&mut` to match quiche and to simplify the implementation.

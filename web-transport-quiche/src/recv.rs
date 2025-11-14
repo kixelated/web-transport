@@ -52,8 +52,8 @@ impl RecvStream {
     /// Tell the other end to stop sending data with the given error code.
     ///
     /// This is a u32 with WebTransport since it shares the error space with HTTP/3.
-    pub fn close(&mut self, code: u32) {
-        self.inner.close(web_transport_proto::error_to_http3(code));
+    pub fn stop(&mut self, code: u32) {
+        self.inner.stop(web_transport_proto::error_to_http3(code));
     }
 
     /// Block until the stream has been reset and return the error code.
@@ -65,8 +65,8 @@ impl RecvStream {
 impl Drop for RecvStream {
     fn drop(&mut self) {
         if !self.inner.is_closed() {
-            tracing::warn!("stream dropped without `close` or reading all contents");
-            self.inner.close(DROP_CODE)
+            tracing::warn!("stream dropped without `stop` or reading all contents");
+            self.inner.stop(DROP_CODE)
         }
     }
 }
@@ -94,8 +94,8 @@ impl web_transport_trait::RecvStream for RecvStream {
         self.read_chunk(max).await
     }
 
-    fn close(&mut self, code: u32) {
-        self.close(code);
+    fn stop(&mut self, code: u32) {
+        self.stop(code);
     }
 
     async fn closed(&mut self) -> Result<(), Self::Error> {
