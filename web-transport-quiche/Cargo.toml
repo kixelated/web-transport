@@ -14,6 +14,12 @@ categories = ["network-programming", "web-programming"]
 [package.metadata.docs.rs]
 all-features = true
 
+[features]
+default = ["boring"]
+
+# Use the boring crate for TLS instead of vendored BoringSSL.
+boring = ["quiche/boringssl-boring-crate"]
+
 [dependencies]
 bytes = "1"
 flume = "0.11"
@@ -30,6 +36,10 @@ tokio = { version = "1", default-features = false, features = [
 ] }
 
 tokio-quiche = "0.10"
+
+# Required to change the quiche feature flags.
+quiche = "*"
+
 tracing = "0.1"
 url = "2"
 web-transport-proto = { workspace = true }
