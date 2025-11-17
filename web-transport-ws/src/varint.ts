@@ -28,7 +28,7 @@ export class VarInt {
 		const x = this.value;
 
 		const size = this.size();
-		if (dst.buffer.byteLength < dst.byteLength + size) {
+		if (dst.byteOffset + dst.byteLength + size > dst.buffer.byteLength) {
 			throw new Error("destination buffer too small");
 		}
 
