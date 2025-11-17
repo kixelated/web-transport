@@ -1,0 +1,16 @@
+{
+	"name": "web-transport-workspace",
+	"private": true,
+	"type": "module",
+	"workspaces": [
+		"web-demo",
+		"web-transport-ws"
+	],
+	"scripts": {
+		"check": "biome check",
+		"fix": "biome check --fix"
+	},
+	"devDependencies": {
+		"@biomejs/biome": "^2.2.2"
+	}
+}
