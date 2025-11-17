@@ -44,6 +44,10 @@ check:
 	# requires: cargo install cargo-sort
 	cargo sort --workspace --check
 
+	# Check JavaScript/TypeScript with biome
+	bun install
+	bun run check
+
 # Run any CI tests
 test:
 	cargo test --workspace --all-targets --all-features
@@ -69,6 +73,10 @@ fix:
 
 	# And of course, make sure the formatting is correct.
 	cargo fmt --all
+
+	# Fix JavaScript/TypeScript with biome
+	bun install
+	bun run fix
 
 # Upgrade any tooling
 upgrade:

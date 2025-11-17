@@ -59,14 +59,14 @@ async function run() {
 	await writer.close();
 	writer.releaseLock();
 
-	log("send: " + msg);
+	log(`send: ${msg}`);
 
 	// Read a message from it
 	// TODO handle partial reads
 	const { value } = await reader.read();
 
 	const recv = new TextDecoder().decode(value);
-	log("recv: " + recv);
+	log(`recv: ${recv}`);
 
 	transport.close();
 	log("closed");

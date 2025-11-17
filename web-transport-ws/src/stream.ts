@@ -3,47 +3,47 @@ import { VarInt } from "./varint.ts";
 export const Dir = {
 	Bi: 0,
 	Uni: 1,
-} as const
+} as const;
 
-export type DirType = (typeof Dir)[keyof typeof Dir]
+export type DirType = (typeof Dir)[keyof typeof Dir];
 
 export class Id {
-	readonly value: VarInt
+	readonly value: VarInt;
 
 	constructor(value: VarInt) {
-		this.value = value
+		this.value = value;
 	}
 
 	static create(id: bigint, dir: DirType, isServer: boolean): Id {
-		let streamId = id << 2n
+		let streamId = id << 2n;
 		if (dir === Dir.Uni) {
-			streamId |= 0x02n
+			streamId |= 0x02n;
 		}
 		if (isServer) {
-			streamId |= 0x01n
+			streamId |= 0x01n;
 		}
-		return new Id(VarInt.from(streamId))
+		return new Id(VarInt.from(streamId));
 	}
 
 	get dir(): DirType {
-		return (this.value.value & 0x02n) !== 0n ? Dir.Uni : Dir.Bi
+		return (this.value.value & 0x02n) !== 0n ? Dir.Uni : Dir.Bi;
 	}
 
 	get serverInitiated(): boolean {
-		return (this.value.value & 0x01n) !== 0n
+		return (this.value.value & 0x01n) !== 0n;
 	}
 
 	canRecv(isServer: boolean): boolean {
 		if (this.dir === Dir.Uni) {
-			return this.serverInitiated !== isServer
+			return this.serverInitiated !== isServer;
 		}
-		return true
+		return true;
 	}
 
 	canSend(isServer: boolean): boolean {
 		if (this.dir === Dir.Uni) {
-			return this.serverInitiated === isServer
+			return this.serverInitiated === isServer;
 		}
-		return true
+		return true;
 	}
 }

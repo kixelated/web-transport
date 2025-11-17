@@ -27,6 +27,7 @@
           pkgs.cargo-edit
           pkgs.cargo-hack
           pkgs.just
+          pkgs.bun
           pkgs.pkg-config
           pkgs.glib
           pkgs.gtk3
