@@ -47,6 +47,7 @@ async function main() {
     const biWriter = biStream.writable.getWriter();
     const request = "ping";
     await biWriter.write(new TextEncoder().encode(request));
+    await biWriter.close();
     console.log(`✓ Sent: "${request}"`);
 
     // Read response
@@ -56,8 +57,6 @@ async function main() {
         const response = new TextDecoder().decode(value);
         console.log(`✓ Received: "${response}"`);
     }
-
-    await biWriter.close();
     biReader.releaseLock();
 
     // Example 3: Listen for incoming streams
