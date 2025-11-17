@@ -11,7 +11,6 @@ globalThis.WebTransport = WebTransportWs;
 globalThis.WebSocket = WebSocket;
 
 async function main() {
-	// @ts-expect-error too lazy to debug node types
 	const url = process.argv[2] || "http://localhost:3000";
 
 	console.log(`Connecting to ${url}...`);

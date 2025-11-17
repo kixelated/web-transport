@@ -86,6 +86,10 @@ export default class WebTransportWs implements WebTransport {
 				this.#incomingUnidirectionalStreams = controller;
 			},
 		});
+
+		if (!this.#incomingBidirectionalStreams || !this.#incomingUnidirectionalStreams) {
+			throw new Error("ReadableStream didn't call start");
+		}
 	}
 
 	static #convertToWebSocketUrl(url: string | URL): string {
@@ -181,6 +185,10 @@ export default class WebTransportWs implements WebTransport {
 				},
 			});
 
+			if (!stream) {
+				throw new Error("ReadableStream didn't call start");
+			}
+
 			if (frame.id.dir === Stream.Dir.Bi) {
 				// Incoming bidirectional stream
 				const writer = new WritableStream<Uint8Array>({
@@ -230,11 +238,11 @@ export default class WebTransportWs implements WebTransport {
 		}
 
 		if (frame.data.byteLength > 0) {
-			stream?.enqueue(frame.data);
+			stream.enqueue(frame.data);
 		}
 
 		if (frame.fin) {
-			stream?.close();
+			stream.close();
 			this.#recvStreams.delete(streamId);
 		}
 	}
