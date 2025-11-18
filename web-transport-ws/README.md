@@ -41,6 +41,29 @@ npm install
 npm run build
 ```
 
+### Usage
+```bash
+cargo run --example server
+```
+
+```
+bun examples/client.ts
+```
+
+```
+deno -A --sloppy-imports examples/client.ts
+```
+
+#### Bundle TypeScript source to single JavaScript file
+```
+bun build --target=node --outfile=examples/client.js examples/client.ts 
+```
+
+```
+node examples/client.js
+```
+
+
 ## License
 
 MIT OR Apache-2.0
